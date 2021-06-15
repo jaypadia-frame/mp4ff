@@ -9,7 +9,20 @@ import (
 	"github.com/go-test/deep"
 )
 
-const videoNaluStart = "25888040ffde08e47a7bff05ab"
+const (
+	// Slice Type Test Data
+	videoNaluStart = "25888040ffde08e47a7bff05ab"
+	// IDR Test Data
+	videoSliceDataIDR = "6588840B5B07C341"
+	SPSIDRTest        = "674d4028d900780227e59a808080a000000300c0000023c1e30649"
+	PPSIDRTest        = "68ebc08cf2"
+	// P Frame Test Data
+	videoSliceDataPFrame = "419A384603FA42D6FFB5F01137F156003C"
+	SPSPFrameTest        = "674d4028d900780227e59a808080a000000300c0000023c1e30649"
+	PPSPFrameTest        = "68ebc08cf2"
+	// P Frame Encrypted Slice Data Test - slice data (after slice header is encrypted)
+	videoSliceDataPFrameEnc = "419A384603FA42D6FF62ADEB"
+)
 
 func TestSliceTypeParser(t *testing.T) {
 	byteData, _ := hex.DecodeString(videoNaluStart)
@@ -23,100 +36,67 @@ func TestSliceTypeParser(t *testing.T) {
 	}
 }
 
-func TestParseSliceHeader_BlackFrame(t *testing.T) {
-	wantedHdr := SliceHeader{
-		SliceType:              7,
-		SliceQPDelta:           6,
-		SliceAlphaC0OffsetDiv2: -3,
-		SliceBetaOffsetDiv2:    -3,
-		Size:                   7,
+func TestSliceHeaderParserIDR(t *testing.T) {
+	// SPS needed to parse PPS and Slice Header
+	spsData, _ := hex.DecodeString(SPSIDRTest)
+	sps, err := ParseSPSNALUnit(spsData, false)
+	if err != nil {
+		t.Errorf("Parse IDR Failed to parse SPS")
 	}
-	data, err := ioutil.ReadFile("testdata/blackframe.264")
+	// PPS needed to Parse Slice Header
+	ppsData, _ := hex.DecodeString(PPSIDRTest)
+	pps, err := ParsePPSNALUnit(ppsData, sps)
+	if err != nil {
+		t.Errorf("Parse IDR Failed to parse PPS")
+	}
+
+	byteData, _ := hex.DecodeString(videoSliceDataIDR) // Actual slice header data
+	_, err = ParseSliceHeader(byteData, sps, pps)
 	if err != nil {
 		t.Error(err)
-	}
-	nalus := ExtractNalusFromByteStream(data)
-	spsMap := make(map[uint32]*SPS, 1)
-	ppsMap := make(map[uint32]*PPS, 1)
-	var gotHdr *SliceHeader
-	for _, nalu := range nalus {
-		switch GetNaluType(nalu[0]) {
-		case NALU_SPS:
-			sps, err := ParseSPSNALUnit(nalu, true)
-			if err != nil {
-				t.Error(err)
-			}
-			spsMap[uint32(sps.ParameterID)] = sps
-		case NALU_PPS:
-			pps, err := ParsePPSNALUnit(nalu, spsMap)
-			if err != nil {
-				t.Error(err)
-			}
-			ppsMap[uint32(pps.PicParameterSetID)] = pps
-		case NALU_IDR:
-			gotHdr, err = ParseSliceHeader(nalu, spsMap, ppsMap)
-			if err != nil {
-				t.Error(err)
-			}
-		}
-	}
-	if diff := deep.Equal(wantedHdr, *gotHdr); diff != nil {
-		fmt.Printf("Got Slice Header: %+v\n Diff is: ", *gotHdr)
-		t.Error(diff)
 	}
 }
 
-func TestParseSliceHeader_TwoFrames(t *testing.T) {
-	wantedIdrHdr := SliceHeader{SliceType: SLICE_I, IDRPicID: 1, SliceQPDelta: 8, Size: 5}
-	wantedNonIdrHdr := SliceHeader{
-		SliceType: SLICE_P, FrameNum: 1, ModificationOfPicNumsIDC: 3, SliceQPDelta: 13,
-		Size: 5, NumRefIdxActiveOverrideFlag: true, RefPicListModificationL0Flag: true,
+func TestSliceHeaderParserPFrame(t *testing.T) {
+	// SPS needed to parse PPS and Slice Header
+	spsData, _ := hex.DecodeString(SPSPFrameTest)
+	sps, err := ParseSPSNALUnit(spsData, false)
+	if err != nil {
+		t.Errorf("Parse PFrame Failed to parse SPS")
 	}
-
-	data, err := ioutil.ReadFile("testdata/two-frames.264")
+	// PPS needed to Parse Slice Header
+	ppsData, _ := hex.DecodeString(PPSPFrameTest)
+	pps, err := ParsePPSNALUnit(ppsData, sps)
+	if err != nil {
+		t.Errorf("Parse PFrame Failed to parse PPS")
+	}
+	// Actual slice header data plus unencrypted slice data
+	byteData, _ := hex.DecodeString(videoSliceDataPFrame)
+	_, err = ParseSliceHeader(byteData, sps, pps)
 	if err != nil {
 		t.Error(err)
-	}
-	nalus, err := GetNalusFromSample(data)
-	if err != nil {
-		t.Error(err)
-	}
-	spsMap := make(map[uint32]*SPS, 1)
-	ppsMap := make(map[uint32]*PPS, 1)
-	var gotIdrHdr *SliceHeader
-	var gotNonIdrHdr *SliceHeader
-	for _, nalu := range nalus {
-		switch GetNaluType(nalu[0]) {
-		case NALU_SPS:
-			sps, err := ParseSPSNALUnit(nalu, true)
-			if err != nil {
-				t.Error(err)
-			}
-			spsMap[uint32(sps.ParameterID)] = sps
-		case NALU_PPS:
-			pps, err := ParsePPSNALUnit(nalu, spsMap)
-			if err != nil {
-				t.Error(err)
-			}
-			ppsMap[uint32(pps.PicParameterSetID)] = pps
-		case NALU_IDR:
-			gotIdrHdr, err = ParseSliceHeader(nalu, spsMap, ppsMap)
-			if err != nil {
-				t.Error(err)
-			}
-		case NALU_NON_IDR:
-			gotNonIdrHdr, err = ParseSliceHeader(nalu, spsMap, ppsMap)
-			if err != nil {
-				t.Error(err)
-			}
-		}
-	}
-	if diff := deep.Equal(wantedIdrHdr, *gotIdrHdr); diff != nil {
-		fmt.Printf("Got IDR Slice Header: %+v\n Diff is: ", *gotIdrHdr)
-		t.Error(diff)
-	}
-	if diff := deep.Equal(wantedNonIdrHdr, *gotNonIdrHdr); diff != nil {
-		fmt.Printf("Got NON_IDR Slice Header: %+v\n Diff is: ", *gotNonIdrHdr)
-		t.Error(diff)
 	}
 }
+
+func TestSliceHeaderParserPFrameEnc(t *testing.T) {
+	// SPS needed to parse PPS and Slice Header
+	spsData, _ := hex.DecodeString(SPSPFrameTest)
+	sps, err := ParseSPSNALUnit(spsData, false)
+	if err != nil {
+		t.Errorf("Parse PFrame Failed to parse SPS")
+	}
+	// PPS needed to Parse Slice Header
+	ppsData, _ := hex.DecodeString(PPSPFrameTest)
+	pps, err := ParsePPSNALUnit(ppsData, sps)
+	if err != nil {
+		t.Errorf("Parse PFrame Failed to parse PPS")
+	}
+	// Actual slice header plus encrypted slice data
+	byteData, _ := hex.DecodeString(videoSliceDataPFrameEnc)
+	_, err = ParseSliceHeader(byteData, sps, pps)
+	if err != nil {
+		t.Error(err)
+	}
+}
+
+// Test coverage that needs to be added - B slice, SP & SI slices, Ref Pic List modification
