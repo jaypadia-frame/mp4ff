@@ -24,7 +24,7 @@
        - language: und
       [hdlr] size=61 version=0 flags=000000
        - handlerType: vide
-       - handlerName: "Edgeware Video Media Handler"
+       - handlerName: "jaypadia-frame Video Media Handler"
       [minf] size=383
         [vmhd] size=20 version=0 flags=000000
         [dinf] size=36

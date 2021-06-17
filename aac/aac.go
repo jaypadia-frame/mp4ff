@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/Eyevinn/mp4ff/bits"
+	"github.com/jaypadia-frame/mp4ff/bits"
 )
 
 const (

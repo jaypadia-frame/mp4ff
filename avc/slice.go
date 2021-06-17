@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/Eyevinn/mp4ff/bits"
+	"github.com/jaypadia-frame/mp4ff/bits"
 )
 
 // Errors for parsing and handling AVC slices

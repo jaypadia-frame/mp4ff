@@ -7,6 +7,7 @@ Install like
 
 or remotely as
 
-	go get -u github.com/Eyevinn/mp4ff/cmd/mp4ff-info
+	go get -u github.com/jaypadia-frame/mp4ff/cmd/mp4ff-info
+
 */
 package cmd

@@ -1,6 +1,7 @@
 # Copyright
 
 `Copyright (c) 2019-2022 Edgeware AB, 2023- Eyevinn Technology AB`.
+`Copyright (c) 2019-2020 jaypadia-frame AB`.
 
 Some code in this directory comes from or is based on https://github.com/tcnksm/go-casper/tree/master/internal/bits
 `Copyright (c) 2017 Taichi Nakashima`.

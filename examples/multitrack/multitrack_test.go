@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/Eyevinn/mp4ff/mp4"
+	"github.com/jaypadia-frame/mp4ff/mp4"
 	"github.com/go-test/deep"
 )
 

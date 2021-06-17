@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/Eyevinn/mp4ff/avc"
-	"github.com/Eyevinn/mp4ff/bits"
+	"github.com/jaypadia-frame/mp4ff/avc"
+	"github.com/jaypadia-frame/mp4ff/bits"
 )
 
 // AvcCBox - AVCConfigurationBox (ISO/IEC 14496-15 5.4.2.1.2 and 5.3.3.1.2)
