@@ -51,7 +51,7 @@ func TestSliceHeaderParserIDR(t *testing.T) {
 	}
 
 	byteData, _ := hex.DecodeString(videoSliceDataIDR) // Actual slice header data
-	_, err = ParseSliceHeader(byteData, sps, pps)
+	_, _, err = ParseSliceHeader(byteData, sps, pps)
 	if err != nil {
 		t.Error(err)
 	}
@@ -72,7 +72,7 @@ func TestSliceHeaderParserPFrame(t *testing.T) {
 	}
 	// Actual slice header data plus unencrypted slice data
 	byteData, _ := hex.DecodeString(videoSliceDataPFrame)
-	_, err = ParseSliceHeader(byteData, sps, pps)
+	_, _, err = ParseSliceHeader(byteData, sps, pps)
 	if err != nil {
 		t.Error(err)
 	}
@@ -93,7 +93,7 @@ func TestSliceHeaderParserPFrameEnc(t *testing.T) {
 	}
 	// Actual slice header plus encrypted slice data
 	byteData, _ := hex.DecodeString(videoSliceDataPFrameEnc)
-	_, err = ParseSliceHeader(byteData, sps, pps)
+	_, _, err = ParseSliceHeader(byteData, sps, pps)
 	if err != nil {
 		t.Error(err)
 	}
