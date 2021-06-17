@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/edgeware/mp4ff/hevc"
+	"github.com/jaypadia-frame/mp4ff/hevc"
 )
 
 // HvcCBox - HEVCConfigurationBox (ISO/IEC 14496-15 8.4.1.1.2)

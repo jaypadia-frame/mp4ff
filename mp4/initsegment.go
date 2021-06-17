@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/edgeware/mp4ff/aac"
-	"github.com/edgeware/mp4ff/avc"
-	"github.com/edgeware/mp4ff/hevc"
+	"github.com/jaypadia-frame/mp4ff/aac"
+	"github.com/jaypadia-frame/mp4ff/avc"
+	"github.com/jaypadia-frame/mp4ff/hevc"
 )
 
 // InitSegment - MP4/CMAF init segment

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/edgeware/mp4ff/bits"
+	"github.com/jaypadia-frame/mp4ff/bits"
 )
 
 type PPS struct {

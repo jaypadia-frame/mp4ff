@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/edgeware/mp4ff/bits"
+	"github.com/jaypadia-frame/mp4ff/bits"
 )
 
 // extendedSAR - Extended Sample Aspect Ratio Code

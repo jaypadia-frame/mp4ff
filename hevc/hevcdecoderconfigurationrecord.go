@@ -6,7 +6,7 @@ import (
 	"io"
 	"io/ioutil"
 
-	"github.com/edgeware/mp4ff/bits"
+	"github.com/jaypadia-frame/mp4ff/bits"
 )
 
 var ErrLengthSize = errors.New("Can only handle 4byte NALU length size")

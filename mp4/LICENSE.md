@@ -1,6 +1,6 @@
 # Copyright
 
-Most code is `Copyright (c) 2019-2020 Edgeware AB`.
+Most code is `Copyright (c) 2019-2020 jaypadia-frame AB`.
 
 Some code in this directory comes from or is based on https://github.com/jfbus/mp4 which has
 `Copyright (c) 2015 Jean-François Bustarret`.

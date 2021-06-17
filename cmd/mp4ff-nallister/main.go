@@ -8,9 +8,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/edgeware/mp4ff/avc"
-	"github.com/edgeware/mp4ff/hevc"
-	"github.com/edgeware/mp4ff/mp4"
+	"github.com/jaypadia-frame/mp4ff/avc"
+	"github.com/jaypadia-frame/mp4ff/hevc"
+	"github.com/jaypadia-frame/mp4ff/mp4"
 )
 
 var usg = `Usage of mp4ff-nallister:

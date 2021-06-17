@@ -5,7 +5,7 @@ import (
 	"errors"
 	"math"
 
-	"github.com/edgeware/mp4ff/bits"
+	"github.com/jaypadia-frame/mp4ff/bits"
 )
 
 var ErrNoSliceHeader = errors.New("No slice header")

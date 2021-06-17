@@ -9,8 +9,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/edgeware/mp4ff/avc"
-	"github.com/edgeware/mp4ff/mp4"
+	"github.com/jaypadia-frame/mp4ff/avc"
+	"github.com/jaypadia-frame/mp4ff/mp4"
 )
 
 const (

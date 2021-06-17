@@ -1,10 +1,12 @@
 ![Logo](images/logo.png)
 
-![Test](https://github.com/edgeware/mp4ff/workflows/Go/badge.svg)
-![golangci-lint](https://github.com/edgeware/mp4ff/workflows/golangci-lint/badge.svg?branch=master)
-[![GoDoc](https://godoc.org/github.com/edgeware/mp4ff?status.svg)](http://godoc.org/github.com/edgeware/mp4ff)
-[![Go Report Card](https://goreportcard.com/badge/github.com/edgeware/mp4ff)](https://goreportcard.com/report/github.com/edgeware/mp4ff)
-[![license](https://img.shields.io/github/license/edgeware/mp4ff.svg)](https://github.com/edgeware/mp4ff/blob/master/LICENSE.md)
+![Test](https://github.com/jaypadia-frame/mp4ff/workflows/Go/badge.svg)
+![golangci-lint](https://github.com/jaypadia-frame/mp4ff/workflows/golangci-lint/badge.svg?branch=master)
+[![GoDoc](https://godoc.org/github.com/jaypadia-frame/mp4ff?status.svg)](http://godoc.org/github.com/jaypadia-frame/mp4ff)
+[![Go Report Card](https://goreportcard.com/badge/github.com/jaypadia-frame/mp4ff)](https://goreportcard.com/report/github.com/jaypadia-frame/mp4ff)
+[![license](https://img.shields.io/github/license/jaypadia-frame/mp4ff.svg)](https://github.com/jaypadia-frame/mp4ff/blob/master/LICENSE.md)
+
+**NOTE: this is a fork from edgeware/mp4ff - used only for experimental purpose right now**
 
 Package mp4ff implements MP4 media file parser and writer for AVC and HEVC video, AAC audio and stpp/wvtt subtitles.
 Focused on fragmented files as used for streaming in DASH, MSS and HLS fMP4.
@@ -53,7 +55,7 @@ The first step is to create an init segment. This is done in three steps and can
 3. `init.Moov.Trak.SetHEVCDescriptor("hvc1", vpsNALUs, spsNALUs, ppsNALUs)`
 
 where the 3'rd step fills in codec-specific parameters into the sample descriptor of the first track.
-Multiple tracks are also available as via the slice variable `Traks` instead of `Trak`. 
+Multiple tracks are also available as via the slice variable `Traks` instead of `Trak`.
 
 The second step is to start producing media segments. They should use the timescale that
 was set when creating the init segments. The timescales should be chosen so that the
