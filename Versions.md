@@ -2,6 +2,7 @@
 
 | Version | Highlight |
 | ------  | --------- |
+| 0.24.0 | feat: support for AVC Slice Header Parsing
 | 0.23.0 | api-change: encode mode and optimization options |
 | 0.22.0 | feat: add codec string for AVC and HEVC |
 | 0.21.1 | fix: allow MPEG-2 ADTS |
