@@ -211,7 +211,7 @@ func ParseSliceHeader(data []byte, sps *SPS, pps *PPS) (*SliceHeader, int, error
 			return nil, r.NrBytesRead(), err
 		}
 	}
-	avcsh.FrameNum, err = r.Read(int(sps.Log2MaxFrameNumMinus4 + 4))
+	avcsh.FrameNum, err = r.Read(int(sps.Log2MaxFrameNumMinus4) + 4)
 	if err != nil {
 		return nil, r.NrBytesRead(), err
 	}
@@ -235,7 +235,7 @@ func ParseSliceHeader(data []byte, sps *SPS, pps *PPS) (*SliceHeader, int, error
 	}
 
 	if sps.PicOrderCntType == 0 {
-		avcsh.PicOrderCntLSB, err = r.Read(int(sps.Log2MaxPicOrderCntLsbMinus4 + 4))
+		avcsh.PicOrderCntLSB, err = r.Read(int(sps.Log2MaxPicOrderCntLsbMinus4) + 4)
 		if err != nil {
 			return nil, r.NrBytesRead(), err
 		}
@@ -378,7 +378,8 @@ func ParseRefPicListModification(r *bits.EBSPReader, avcsh *SliceHeader) (*RefPi
 		}
 
 		if rplm.RefPicListModificationFlagL0 {
-			for mopni := 0; mopni != 3; {
+			var mopni int
+			for ok := true; ok; ok = (mopni != 3) {
 				rplmEntry := PerEntryRefPicListModParams{}
 				rplmEntry.ModificationOfPicNumsIDC, err = r.ReadExpGolomb()
 				if err != nil {
@@ -408,7 +409,8 @@ func ParseRefPicListModification(r *bits.EBSPReader, avcsh *SliceHeader) (*RefPi
 		}
 
 		if rplm.RefPicListModificationFlagL0 {
-			for mopni := 0; mopni != 3; {
+			var mopni int
+			for ok := true; ok; ok = (mopni != 3) {
 				rplmEntry := PerEntryRefPicListModParams{}
 				rplmEntry.ModificationOfPicNumsIDC, err = r.ReadExpGolomb()
 				if err != nil {
@@ -466,7 +468,7 @@ func ParsePredWeightTable(r *bits.EBSPReader, sps *SPS, avcsh *SliceHeader) (*Pr
 				return nil, err
 			}
 			pwt.LumaWeightL0 = append(pwt.LumaWeightL0, lumaWeightL0)
-			pwt.LumaOffsetL0 = append(pwt.LumaWeightL0, lumaOffsetL0)
+			pwt.LumaOffsetL0 = append(pwt.LumaOffsetL0, lumaOffsetL0)
 		}
 
 		if getChromaArrayType(sps) != 0 {
@@ -563,13 +565,14 @@ func ParseDecRefPicMarking(r *bits.EBSPReader, naluType NaluType) (*DecRefPicMar
 		}
 
 		if rpm.AdaptiveRefPicMarkingModeFlag {
-			for mmco := 1; mmco != 0; {
+			var mmco int
+			for ok := true; ok; ok = (mmco != 0) {
 				arpmParams := AdaptiveMemCtrlDecRefPicMarkingParams{}
 				arpmParams.MemoryManagementControlOperation, err = r.ReadExpGolomb()
 				if err != nil {
 					return nil, err
 				}
-				mmco := arpmParams.MemoryManagementControlOperation
+				mmco = int(arpmParams.MemoryManagementControlOperation)
 
 				if mmco == 1 || mmco == 3 {
 					arpmParams.DifferenceOfPicNumsMinus1, err = r.ReadExpGolomb()
