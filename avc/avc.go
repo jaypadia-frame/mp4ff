@@ -61,7 +61,7 @@ func GetNaluType(naluHeader byte) NaluType {
 
 // Get NaluRefIDC from NAL Unit Header byte
 func GetNalRefIDC(naluHeader byte) uint {
-	return uint(naluHeader & 0x30 >> 5)
+	return uint(naluHeader & 0x60 >> 5)
 }
 
 // FindNaluTypes - find list of NAL unit types in sample
