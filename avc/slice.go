@@ -384,6 +384,7 @@ func ParseRefPicListModification(r *bits.EBSPReader, avcsh *SliceHeader) (*RefPi
 				if err != nil {
 					return nil, err
 				}
+				mopni = int(rplmEntry.ModificationOfPicNumsIDC)
 				if rplmEntry.ModificationOfPicNumsIDC == 0 || rplmEntry.ModificationOfPicNumsIDC == 1 {
 					rplmEntry.AbsDiffPicNumMinus1, err = r.ReadExpGolomb()
 					if err != nil {
@@ -413,6 +414,7 @@ func ParseRefPicListModification(r *bits.EBSPReader, avcsh *SliceHeader) (*RefPi
 				if err != nil {
 					return nil, err
 				}
+				mopni = int(rplmEntry.ModificationOfPicNumsIDC)
 				if rplmEntry.ModificationOfPicNumsIDC == 0 || rplmEntry.ModificationOfPicNumsIDC == 1 {
 					rplmEntry.AbsDiffPicNumMinus1, err = r.ReadExpGolomb()
 					if err != nil {
