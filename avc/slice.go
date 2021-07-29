@@ -278,6 +278,9 @@ func ParseSliceHeader(data []byte, sps *SPS, pps *PPS) (*SliceHeader, int, error
 				return nil, r.NrBytesRead(), err
 			}
 		}
+	} else {
+		avcsh.NumRefIdxL0ActiveMinus1 = pps.NumRefIdxI0DefaultActiveMinus1
+		avcsh.NumRefIdxL1ActiveMinus1 = pps.NumRefIdxI1DefaultActiveMinus1
 	}
 
 	if nalType == NaluType(20) || nalType == NaluType(21) {
