@@ -6,14 +6,13 @@ import (
 )
 
 // Writer writes bits into underlying io.Writer. Stops writing at first error.
-// Errors that have occured can later be checked with Error().
+// Errors that have occurred can later be checked with Error().
 type Writer struct {
-	n   int    // current number of bits
-	v   uint   // current accumulated value
+	wr  io.Writer
 	err error  // The first error caused by any write operation
 	out []byte // Slice of length 1 to avoid allocation at output
-
-	wr io.Writer
+	n   int    // current number of bits
+	v   uint   // current accumulated value
 }
 
 // NewWriter - returns a new Writer
@@ -60,17 +59,16 @@ func (w *Writer) Flush() {
 	}
 }
 
-// Error - error that has occured and stopped writing
+// Error - error that has occurred and stopped writing
 func (w *Writer) Error() error {
 	return w.err
 }
 
 // Reader - read bits from the given io.Reader
 type Reader struct {
-	n int  // current number of bits
-	v uint // current accumulated value
-
 	rd io.Reader
+	n  int  // current number of bits
+	v  uint // current accumulated value
 }
 
 // NewReader - return a new Reader

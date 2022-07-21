@@ -1,7 +1,6 @@
 package avc
 
 import (
-	"bytes"
 	"encoding/hex"
 	"testing"
 
@@ -17,7 +16,7 @@ func TestAvcDecoderConfigRecord(t *testing.T) {
 	spsBytes, _ := hex.DecodeString(sps)
 	ppsBytes, _ := hex.DecodeString(pps)
 
-	wanted := AVCDecConfRec{
+	wanted := DecConfRec{
 		AVCProfileIndication: 100,
 		ProfileCompatibility: 0,
 		AVCLevelIndication:   30,
@@ -29,7 +28,7 @@ func TestAvcDecoderConfigRecord(t *testing.T) {
 		NumSPSExt:            0,
 	}
 
-	got, err := DecodeAVCDecConfRec(bytes.NewBuffer(byteData))
+	got, err := DecodeAVCDecConfRec(byteData)
 	if err != nil {
 		t.Error("Error parsing AVCDecoderConfigurationRecord")
 	}

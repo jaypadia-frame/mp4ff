@@ -61,7 +61,7 @@ func TestInitSegmentParsing(t *testing.T) {
 
 }
 
-func TestMoovParsingWithBtrtParsing(t *testing.T) {
+func TestMoovParsingWithBtrt(t *testing.T) {
 	initFile := "testdata/init_prog.mp4"
 	initDumpGoldenPath := "testdata/golden_init_prog_mp4_dump.txt"
 	f, err := parseInitFile(initFile)
@@ -157,7 +157,7 @@ func TestGenerateInitSegment(t *testing.T) {
 	init := CreateEmptyInit()
 	init.AddEmptyTrack(180000, "video", "und")
 	trak := init.Moov.Trak
-	err := trak.SetAVCDescriptor("avc3", spsData, ppsData)
+	err := trak.SetAVCDescriptor("avc3", spsData, ppsData, true)
 	if err != nil {
 		t.Error(err)
 	}

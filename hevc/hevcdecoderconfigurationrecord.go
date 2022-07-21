@@ -4,16 +4,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 
 	"github.com/jaypadia-frame/mp4ff/bits"
 )
 
-var ErrLengthSize = errors.New("Can only handle 4byte NALU length size")
+// HEVC errors
+var (
+	ErrLengthSize = errors.New("can only handle 4byte NALU length size")
+)
 
-//HEVCDecConfRec - HEVCDecoderConfigurationRecord
+// DecConfRec - HEVCDecoderConfigurationRecord
 // Specified in ISO/IEC 14496-15 4't ed 2017 Sec. 8.3.3
-type HEVCDecConfRec struct {
+type DecConfRec struct {
 	ConfigurationVersion             byte
 	GeneralProfileSpace              byte
 	GeneralTierFlag                  bool
@@ -46,10 +48,11 @@ func NewNaluArray(complete bool, naluType NaluType, nalus [][]byte) *NaluArray {
 	if complete {
 		completeBit = 0x80
 	}
-	return &NaluArray{
+	na := NaluArray{
 		completeAndType: completeBit | byte(naluType),
-		Nalus:           nalus,
+		Nalus:           nil,
 	}
+	return &na
 }
 
 // NaluType - return NaluType for NaluArray
@@ -62,18 +65,24 @@ func (n *NaluArray) Complete() byte {
 	return n.completeAndType >> 7
 }
 
-// CreateHEVCDecConfRec - extract information from vps, sps, pps and fill HEVCDecConfRec with that
-func CreateHEVCDecConfRec(vpsNalus, spsNalus, ppsNalus [][]byte, vpsComplete, spsComplete, ppsComplete bool) (HEVCDecConfRec, error) {
+// CreateHEVCDecConfRec - extract information from sps and insert vps, sps, pps if includePS set
+func CreateHEVCDecConfRec(vpsNalus, spsNalus, ppsNalus [][]byte,
+	vpsComplete, spsComplete, ppsComplete, includePS bool) (DecConfRec, error) {
+	if len(spsNalus) == 0 {
+		return DecConfRec{}, fmt.Errorf("no SPS NALU supported. Needed to extract fundamental information")
+	}
 	sps, err := ParseSPSNALUnit(spsNalus[0])
 	if err != nil {
-		return HEVCDecConfRec{}, err
+		return DecConfRec{}, err
 	}
 	var naluArrays []NaluArray
-	naluArrays = append(naluArrays, *NewNaluArray(vpsComplete, NALU_VPS, vpsNalus))
-	naluArrays = append(naluArrays, *NewNaluArray(spsComplete, NALU_SPS, spsNalus))
-	naluArrays = append(naluArrays, *NewNaluArray(ppsComplete, NALU_PPS, ppsNalus))
+	if includePS {
+		naluArrays = append(naluArrays, *NewNaluArray(vpsComplete, NALU_VPS, vpsNalus))
+		naluArrays = append(naluArrays, *NewNaluArray(spsComplete, NALU_SPS, spsNalus))
+		naluArrays = append(naluArrays, *NewNaluArray(ppsComplete, NALU_PPS, ppsNalus))
+	}
 	ptf := sps.ProfileTierLevel
-	return HEVCDecConfRec{
+	return DecConfRec{
 		ConfigurationVersion:             1,
 		GeneralProfileSpace:              ptf.GeneralProfileSpace,
 		GeneralTierFlag:                  ptf.GeneralTierFlag,
@@ -96,16 +105,12 @@ func CreateHEVCDecConfRec(vpsNalus, spsNalus, ppsNalus [][]byte, vpsComplete, sp
 }
 
 // DecodeHEVCDecConfRec - decode an HEVCDecConfRec
-func DecodeHEVCDecConfRec(r io.Reader) (HEVCDecConfRec, error) {
-	data, err := ioutil.ReadAll(r)
-	if err != nil {
-		return HEVCDecConfRec{}, err
-	}
-	hdcr := HEVCDecConfRec{}
-	sr := bits.NewSliceReader(data)
+func DecodeHEVCDecConfRec(data []byte) (DecConfRec, error) {
+	hdcr := DecConfRec{}
+	sr := bits.NewFixedSliceReader(data)
 	hdcr.ConfigurationVersion = sr.ReadUint8()
 	if hdcr.ConfigurationVersion != 1 {
-		return HEVCDecConfRec{}, fmt.Errorf("HEVC decoder configuration record version %d unknown",
+		return DecConfRec{}, fmt.Errorf("HEVC decoder configuration record version %d unknown",
 			hdcr.ConfigurationVersion)
 	}
 	aByte := sr.ReadUint8()
@@ -145,7 +150,8 @@ func DecodeHEVCDecConfRec(r io.Reader) (HEVCDecConfRec, error) {
 	return hdcr, sr.AccError()
 }
 
-func (h *HEVCDecConfRec) Size() uint64 {
+// Size - total size in bytes
+func (h *DecConfRec) Size() uint64 {
 	totalSize := 23 // Up to and including numArrays
 	for _, array := range h.NaluArrays {
 		totalSize += 3 // complete + nalu type + num nalus
@@ -157,39 +163,48 @@ func (h *HEVCDecConfRec) Size() uint64 {
 	return uint64(totalSize)
 }
 
-// Encode - write an HEVCDecConfRec to w
-func (h *HEVCDecConfRec) Encode(w io.Writer) error {
-	aw := bits.NewAccErrByteWriter(w)
-	aw.WriteUint8(h.ConfigurationVersion)
+func (h *DecConfRec) Encode(w io.Writer) error {
+	sw := bits.NewFixedSliceWriter(int(h.Size()))
+	err := h.EncodeSW(sw)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(sw.Bytes())
+	return err
+}
+
+// EncodeSW- write an HEVCDecConfRec to sw
+func (h *DecConfRec) EncodeSW(sw bits.SliceWriter) error {
+	sw.WriteUint8(h.ConfigurationVersion)
 	var generalTierFlagBit byte
 	if h.GeneralTierFlag {
 		generalTierFlagBit = 1 << 5
 	}
-	aw.WriteUint8(h.GeneralProfileSpace<<6 | generalTierFlagBit | h.GeneralProfileIDC)
-	aw.WriteUint32(h.GeneralProfileCompatibilityFlags)
-	aw.WriteUint48(h.GeneralConstraintIndicatorFlags)
-	aw.WriteUint8(h.GeneralLevelIDC)
-	aw.WriteUint16(0xf000 | h.MinSpatialSegmentationIDC)
-	aw.WriteUint8(0xfc | h.ParallellismType)
-	aw.WriteUint8(0xfc | h.ChromaFormatIDC)
-	aw.WriteUint8(0xf8 | h.BitDepthLumaMinus8)
-	aw.WriteUint8(0xf8 | h.BitDepthChromaMinus8)
-	aw.WriteUint16(h.AvgFrameRate)
-	aw.WriteUint8(h.ConstantFrameRate<<6 | h.NumTemporalLayers<<3 | h.TemporalIDNested<<2 | h.LengthSizeMinusOne)
-	aw.WriteUint8(byte(len(h.NaluArrays)))
+	sw.WriteUint8(h.GeneralProfileSpace<<6 | generalTierFlagBit | h.GeneralProfileIDC)
+	sw.WriteUint32(h.GeneralProfileCompatibilityFlags)
+	sw.WriteUint48(h.GeneralConstraintIndicatorFlags)
+	sw.WriteUint8(h.GeneralLevelIDC)
+	sw.WriteUint16(0xf000 | h.MinSpatialSegmentationIDC)
+	sw.WriteUint8(0xfc | h.ParallellismType)
+	sw.WriteUint8(0xfc | h.ChromaFormatIDC)
+	sw.WriteUint8(0xf8 | h.BitDepthLumaMinus8)
+	sw.WriteUint8(0xf8 | h.BitDepthChromaMinus8)
+	sw.WriteUint16(h.AvgFrameRate)
+	sw.WriteUint8(h.ConstantFrameRate<<6 | h.NumTemporalLayers<<3 | h.TemporalIDNested<<2 | h.LengthSizeMinusOne)
+	sw.WriteUint8(byte(len(h.NaluArrays)))
 	for _, array := range h.NaluArrays {
-		aw.WriteUint8(array.completeAndType)
-		aw.WriteUint16(uint16(len(array.Nalus)))
+		sw.WriteUint8(array.completeAndType)
+		sw.WriteUint16(uint16(len(array.Nalus)))
 		for _, nalu := range array.Nalus {
-			aw.WriteUint16(uint16(len(nalu)))
-			aw.WriteSlice(nalu)
+			sw.WriteUint16(uint16(len(nalu)))
+			sw.WriteBytes(nalu)
 		}
 	}
-	return aw.AccError()
+	return sw.AccError()
 }
 
 // GetNalusForType - get all nalus for a specific naluType
-func (h *HEVCDecConfRec) GetNalusForType(naluType NaluType) [][]byte {
+func (h *DecConfRec) GetNalusForType(naluType NaluType) [][]byte {
 	for _, naluArray := range h.NaluArrays {
 		if naluArray.NaluType() == naluType {
 			return naluArray.Nalus

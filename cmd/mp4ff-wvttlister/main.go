@@ -18,7 +18,7 @@ mp4ff-wvttlister lists and displays content of wvtt (WebVTT in ISOBMFF) samples.
 Use track with given non-zero track ID or first wvtt track found in an asset.
 `
 
-var Usage = func() {
+var usage = func() {
 	parts := strings.Split(os.Args[0], "/")
 	name := parts[len(parts)-1]
 	fmt.Fprintln(os.Stderr, usg)
@@ -40,7 +40,7 @@ func main() {
 
 	var inFilePath = flag.Arg(0)
 	if inFilePath == "" {
-		Usage()
+		usage()
 		os.Exit(1)
 	}
 
@@ -118,7 +118,7 @@ func parseProgressiveMp4(f *mp4.File, trackID uint32, maxNrSamples int) error {
 			offset = int64(stbl.Co64.ChunkOffset[chunkNr-1])
 		}
 		for sNr := sampleNrAtChunkStart; sNr < sampleNr; sNr++ {
-			offset += int64(stbl.Stsz.SampleSize[sNr-1])
+			offset += int64(stbl.Stsz.GetSampleSize(sNr))
 		}
 		size := stbl.Stsz.GetSampleSize(sampleNr)
 		decTime, dur := stbl.Stts.GetDecodeTime(uint32(sampleNr))
@@ -164,7 +164,7 @@ func parseFragmentedMp4(f *mp4.File, trackID uint32, maxNrSamples int) error {
 			}
 		}
 	}
-	iSamples := make([]*mp4.FullSample, 0)
+	iSamples := make([]mp4.FullSample, 0)
 	for _, iSeg := range f.Segments {
 		for _, iFrag := range iSeg.Fragments {
 			fSamples, err := iFrag.GetFullSamples(wvttTrex)

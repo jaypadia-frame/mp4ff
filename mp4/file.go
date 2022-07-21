@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/edgeware/mp4ff/bits"
 )
 
 // File - an MPEG-4 file asset
@@ -36,27 +38,34 @@ type File struct {
 	fileDecMode  DecFileMode
 }
 
+// EncFragFileMode - mode for writing file
 type EncFragFileMode byte
 
 const (
-	EncModeSegment = EncFragFileMode(0) // Only encode boxes that are part of Init and MediaSegments
-	EncModeBoxTree = EncFragFileMode(1) // Encode all boxes in file tree
+	// EncModeSegment - only encode boxes that are part of Init and MediaSegments
+	EncModeSegment = EncFragFileMode(0)
+	// EncModeBoxTree - encode all boxes in file tree
+	EncModeBoxTree = EncFragFileMode(1)
 )
 
+// DecFileMode - mode for decoding file
 type DecFileMode byte
 
 const (
-	// DecModeNormal reads Mdat data into memory during file decoding.
+	// DecModeNormal - read Mdat data into memory during file decoding.
 	DecModeNormal DecFileMode = iota
-	// DecModeLazyMdat doesn't not read Mdat data into memory,
-	// which means the decoding process requires less memory and faster.
+	// DecModeLazyMdat - do not read mdat data into memory.
+	// Thus, decode process requires less memory and faster.
 	DecModeLazyMdat
 )
 
+// EncOptimize - encoder optimization mode
 type EncOptimize uint32
 
 const (
+	// OptimizeNone - no optimization
 	OptimizeNone = EncOptimize(0)
+	// OptimizeTrun - optimize trun box by moving default values to tfhd
 	OptimizeTrun = EncOptimize(1 << 0)
 )
 
@@ -78,6 +87,7 @@ func NewFile() *File {
 		FragEncMode: EncModeSegment,
 		EncOptimize: OptimizeNone,
 		fileDecMode: DecModeNormal,
+		Children:    make([]Box, 0, 8), // Reasonable number of children
 	}
 }
 
@@ -155,10 +165,29 @@ LoopBoxes:
 		if err != nil {
 			return nil, err
 		}
-		if boxType == "mdat" {
+		switch boxType {
+		case "mdat":
 			if f.isFragmented {
 				if lastBoxType != "moof" {
 					return nil, fmt.Errorf("Does not support %v between moof and mdat", lastBoxType)
+				}
+			}
+		case "moof":
+			moof := box.(*MoofBox)
+			for _, traf := range moof.Trafs {
+				if ok, parsed := traf.ContainsSencBox(); ok && !parsed {
+					defaultIVSize := byte(0) // Should get this from tenc in sinf
+					if f.Moov != nil {
+						trackID := traf.Tfhd.TrackID
+						sinf := f.Moov.GetSinf(trackID)
+						if sinf != nil && sinf.Schi != nil && sinf.Schi.Tenc != nil {
+							defaultIVSize = sinf.Schi.Tenc.DefaultPerSampleIVSize
+						}
+					}
+					err = traf.ParseReadSenc(defaultIVSize, moof.StartPos)
+					if err != nil {
+						return nil, err
+					}
 				}
 			}
 		}
@@ -167,6 +196,15 @@ LoopBoxes:
 		boxStartPos += boxSize
 	}
 	return f, nil
+}
+
+// Size - total size of all boxes
+func (f *File) Size() uint64 {
+	var totSize uint64 = 0
+	for _, f := range f.Children {
+		totSize += f.Size()
+	}
+	return totSize
 }
 
 // AddChild - add child with start position
@@ -311,6 +349,55 @@ func (f *File) Encode(w io.Writer) error {
 	return nil
 }
 
+// EncodeSW - encode a file to a SliceWriter
+// Fragmented files are encoded based on InitSegment and MediaSegments, unless EncodeVerbatim is set.
+func (f *File) EncodeSW(sw bits.SliceWriter) error {
+	if f.isFragmented {
+		switch f.FragEncMode {
+		case EncModeSegment:
+			if f.Init != nil {
+				err := f.Init.EncodeSW(sw)
+				if err != nil {
+					return err
+				}
+			}
+			if f.Sidx != nil {
+				err := f.Sidx.EncodeSW(sw)
+				if err != nil {
+					return err
+				}
+			}
+			for _, seg := range f.Segments {
+				if f.EncOptimize&OptimizeTrun != 0 {
+					seg.EncOptimize = f.EncOptimize
+				}
+				err := seg.EncodeSW(sw)
+				if err != nil {
+					return err
+				}
+			}
+		case EncModeBoxTree:
+			for _, b := range f.Children {
+				err := b.EncodeSW(sw)
+				if err != nil {
+					return err
+				}
+			}
+		default:
+			return fmt.Errorf("Unknown FragEncMode=%d", f.FragEncMode)
+		}
+		return nil
+	}
+	// Progressive file
+	for _, b := range f.Children {
+		err := b.EncodeSW(sw)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Info - write box tree with indent for each level
 func (f *File) Info(w io.Writer, specificBoxLevels, indent, indentStep string) error {
 	for _, box := range f.Children {
@@ -351,4 +438,79 @@ func WithEncodeMode(mode EncFragFileMode) Option {
 // WithDecodeMode sets up DecFileMode
 func WithDecodeMode(mode DecFileMode) Option {
 	return func(f *File) { f.fileDecMode = mode }
+}
+
+// CopySampleData - copy sample data from a track in a progressive mp4 file to w. Use rs if lazy read.
+func (f *File) CopySampleData(w io.Writer, rs io.ReadSeeker, trak *TrakBox, startSampleNr, endSampleNr uint32) error {
+	if f.isFragmented {
+		return fmt.Errorf("only available for progressive files")
+	}
+	mdat := f.Mdat
+
+	if mdat.IsLazy() && rs == nil {
+		return fmt.Errorf("no ReadSeeker for lazy mdat")
+	}
+	mdatPayloadStart := mdat.PayloadAbsoluteOffset()
+
+	stbl := trak.Mdia.Minf.Stbl
+	chunks, err := stbl.Stsc.GetContainingChunks(startSampleNr, endSampleNr)
+	if err != nil {
+		return err
+	}
+	var chunkOffsets []uint64
+	if stbl.Stco != nil {
+		chunkOffsets = make([]uint64, len(stbl.Stco.ChunkOffset))
+		for i := range stbl.Stco.ChunkOffset {
+			chunkOffsets[i] = uint64(stbl.Stco.ChunkOffset[i])
+		}
+	} else if stbl.Co64 != nil {
+		chunkOffsets = stbl.Co64.ChunkOffset
+	} else {
+		return fmt.Errorf("neither stco nor co64 available")
+	}
+	var startNr, endNr uint32
+	var offset uint64
+	for i, chunk := range chunks {
+		startNr = chunk.StartSampleNr
+		endNr = startNr + chunk.NrSamples - 1
+		offset = chunkOffsets[chunk.ChunkNr-1]
+		if i == 0 {
+			for sNr := chunk.StartSampleNr; sNr < startSampleNr; sNr++ {
+				offset += uint64(stbl.Stsz.GetSampleSize(int(sNr)))
+			}
+			startNr = startSampleNr
+		}
+
+		if i == len(chunks)-1 {
+			endNr = endSampleNr
+		}
+		var size int64
+		for sNr := startNr; sNr <= endNr; sNr++ {
+			size += int64(stbl.Stsz.GetSampleSize(int(sNr)))
+		}
+		if mdat.IsLazy() {
+			_, err := rs.Seek(int64(offset), io.SeekStart)
+			if err != nil {
+				return err
+			}
+			n, err := io.CopyN(w, rs, size)
+			if err != nil {
+				return err
+			}
+			if n != size {
+				return fmt.Errorf("copied %d bytes instead of %d", n, size)
+			}
+		} else {
+			offsetInMdatData := offset - mdatPayloadStart
+			n, err := w.Write(mdat.Data[offsetInMdatData : offsetInMdatData+uint64(size)])
+			if err != nil {
+				return err
+			}
+			if int64(n) != size {
+				return fmt.Errorf("copied %d bytes instead of %d", n, size)
+			}
+		}
+	}
+
+	return nil
 }

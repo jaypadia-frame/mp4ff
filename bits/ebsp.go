@@ -11,7 +11,10 @@ const (
 	startCodeEmulationPreventionByte = 0x03
 )
 
-var ErrNotReedSeeker = errors.New("Reader does not support Seek")
+// ESBPReader errors
+var (
+	ErrNotReedSeeker = errors.New("Reader does not support Seek")
+)
 
 // NewEBSPReader - return a new Reader.
 func NewEBSPReader(rd io.Reader) *EBSPReader {
@@ -23,11 +26,10 @@ func NewEBSPReader(rd io.Reader) *EBSPReader {
 
 // EBSPReader - Reader that drops start code emulation 0x03 after two bytes of 0x00
 type EBSPReader struct {
-	n   int  // current number of bits
-	v   uint // current accumulated value
-	pos int
-
 	rd        io.Reader
+	n         int  // current number of bits
+	v         uint // current accumulated value
+	pos       int
 	zeroCount int // Count number of zero bytes read
 }
 
@@ -96,9 +98,8 @@ func (r *EBSPReader) MustReadSignedGolomb() int {
 	unsignedGolomb := r.MustReadExpGolomb()
 	if unsignedGolomb%2 == 1 {
 		return int((unsignedGolomb + 1) / 2)
-	} else {
-		return -int(unsignedGolomb / 2)
 	}
+	return -int(unsignedGolomb / 2)
 }
 
 // NrBytesRead - how many bytes read into parser
@@ -210,9 +211,8 @@ func (r *EBSPReader) ReadSignedGolomb() (int, error) {
 	}
 	if unsignedGolomb%2 == 1 {
 		return int((unsignedGolomb + 1) / 2), nil
-	} else {
-		return -int(unsignedGolomb / 2), nil
 	}
+	return -int(unsignedGolomb / 2), nil
 }
 
 // IsSeeker - does reader support Seek
@@ -227,7 +227,7 @@ func (r *EBSPReader) MoreRbspData() (bool, error) {
 	if !r.IsSeeker() {
 		return false, ErrNotReedSeeker
 	}
-	// Find out if next positon is the last 1
+	// Find out if next position is the last 1
 	stateCopy := *r
 
 	firstBit, err := r.Read(1)

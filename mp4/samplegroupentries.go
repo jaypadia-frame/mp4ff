@@ -4,22 +4,24 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+
+	"github.com/edgeware/mp4ff/bits"
 )
 
 // SampleGroupEntry - like a box, but size and type are not in a header
 type SampleGroupEntry interface {
-	// GroupingType SampleGroupEntry (uint32 according to spec)
+	// Type - GroupingType SampleGroupEntry (uint32 according to spec)
 	Type() string // actually
 	// Size of SampleGroup Entry
 	Size() uint64
 	// Encode SampleGroupEntry to SliceWriter
-	Encode(sw *SliceWriter)
+	Encode(sw bits.SliceWriter)
 	// Info - description of content.
 	Info(w io.Writer, specificBoxLevels, indent, indentStep string) (err error)
 }
 
 // SampleGroupEntryDecoder is function signature of the SampleGroupEntry Decode method
-type SampleGroupEntryDecoder func(name string, length uint32, sr *SliceReader) (SampleGroupEntry, error)
+type SampleGroupEntryDecoder func(name string, length uint32, sr bits.SliceReader) (SampleGroupEntry, error)
 
 var sgeDecoders map[string]SampleGroupEntryDecoder
 
@@ -32,7 +34,7 @@ func init() {
 	}
 }
 
-func decodeSampleGroupEntry(name string, length uint32, sr *SliceReader) (SampleGroupEntry, error) {
+func decodeSampleGroupEntry(name string, length uint32, sr bits.SliceReader) (SampleGroupEntry, error) {
 	decode, ok := sgeDecoders[name]
 	if ok {
 		return decode(name, length, sr)
@@ -52,8 +54,8 @@ type SeigSampleGroupEntry struct {
 	ConstantIV []byte
 }
 
-// DecodeSeigSampleGroupEntry - decode Commone Encryption Sample Group Entry
-func DecodeSeigSampleGroupEntry(name string, length uint32, sr *SliceReader) (SampleGroupEntry, error) {
+// DecodeSeigSampleGroupEntry - decode Common Encryption Sample Group Entry
+func DecodeSeigSampleGroupEntry(name string, length uint32, sr bits.SliceReader) (SampleGroupEntry, error) {
 	s := &SeigSampleGroupEntry{}
 	_ = sr.ReadUint8() // Reserved
 	byteTwo := sr.ReadUint8()
@@ -72,10 +74,17 @@ func DecodeSeigSampleGroupEntry(name string, length uint32, sr *SliceReader) (Sa
 	return s, nil
 }
 
+// ConstantIVSize - non-zero if protected and perSampleIVSize == 0
+func (s *SeigSampleGroupEntry) ConstantIVSize() byte {
+	return byte(len(s.ConstantIV))
+}
+
+// Type - GroupingType SampleGroupEntry (uint32 according to spec)
 func (s *SeigSampleGroupEntry) Type() string {
 	return "seig"
 }
 
+// Size of SampleGroup Entry
 func (s *SeigSampleGroupEntry) Size() uint64 {
 	// reserved: 1
 	// cryptByteBlock + SkipByteBlock : 1
@@ -89,7 +98,8 @@ func (s *SeigSampleGroupEntry) Size() uint64 {
 	return uint64(size)
 }
 
-func (s *SeigSampleGroupEntry) Encode(sw *SliceWriter) {
+// Encode SampleGroupEntry to SliceWriter
+func (s *SeigSampleGroupEntry) Encode(sw bits.SliceWriter) {
 	sw.WriteUint8(0) // Reserved
 	byteTwo := s.CryptByteBlock<<4 | s.SkipByteBlock
 	sw.WriteUint8(byteTwo)
@@ -111,34 +121,39 @@ func (s *SeigSampleGroupEntry) Info(w io.Writer, specificBoxLevels, indent, inde
 	bd.write(" * perSampleIVSize: %d", s.PerSampleIVSize)
 	bd.write(" * KID: %s", s.KID)
 	if s.IsProtected == 1 && s.PerSampleIVSize == 0 {
+		bd.write(" * constantIVSize: %d", s.ConstantIVSize())
 		bd.write(" * constantIV: %s", hex.EncodeToString(s.ConstantIV))
 	}
 	return bd.err
 }
 
-// Unknown or not implemented SampleGroupEntry
+// UnknownSampleGroupEntry - unknown or not implemented SampleGroupEntry
 type UnknownSampleGroupEntry struct {
 	Name   string
 	Length uint32
 	Data   []byte
 }
 
-func DecodeUnknownSampleGroupEntry(name string, length uint32, sr *SliceReader) (SampleGroupEntry, error) {
+// DecodeUnknownSampleGroupEntry - decode an unknown sample group entry
+func DecodeUnknownSampleGroupEntry(name string, length uint32, sr bits.SliceReader) (SampleGroupEntry, error) {
 	return &UnknownSampleGroupEntry{
 		Name: name,
 		Data: sr.ReadBytes(int(length)),
 	}, nil
 }
 
+// Type - GroupingType SampleGroupEntry (uint32 according to spec)
 func (s *UnknownSampleGroupEntry) Type() string {
 	return s.Name
 }
 
+// Size of SampleGroup Entry
 func (s *UnknownSampleGroupEntry) Size() uint64 {
 	return uint64(len(s.Data))
 }
 
-func (s *UnknownSampleGroupEntry) Encode(sw *SliceWriter) {
+// Encode SampleGroupEntry to SliceWriter
+func (s *UnknownSampleGroupEntry) Encode(sw bits.SliceWriter) {
 	sw.WriteBytes(s.Data)
 }
 
@@ -162,21 +177,25 @@ type RollSampleGroupEntry struct {
 	RollDistance int16
 }
 
-func DecodeRollSampleGroupEntry(name string, length uint32, sr *SliceReader) (SampleGroupEntry, error) {
+// DecodeRollSampleGroupEntry - decode Roll Sample Group Entry
+func DecodeRollSampleGroupEntry(name string, length uint32, sr bits.SliceReader) (SampleGroupEntry, error) {
 	entry := &RollSampleGroupEntry{}
 	entry.RollDistance = sr.ReadInt16()
 	return entry, nil
 }
 
+// Type - GroupingType SampleGroupEntry (uint32 according to spec)
 func (s *RollSampleGroupEntry) Type() string {
 	return "roll"
 }
 
+// Size of sample group entry
 func (s *RollSampleGroupEntry) Size() uint64 {
 	return 2
 }
 
-func (s *RollSampleGroupEntry) Encode(sw *SliceWriter) {
+// Encode SampleGroupEntry to SliceWriter
+func (s *RollSampleGroupEntry) Encode(sw bits.SliceWriter) {
 	sw.WriteInt16(s.RollDistance)
 }
 
@@ -195,7 +214,8 @@ type RapSampleGroupEntry struct {
 	NumLeadingSamples      uint8
 }
 
-func DecodeRapSampleGroupEntry(name string, length uint32, sr *SliceReader) (SampleGroupEntry, error) {
+// DecodeRapSampleGroupEntry - decode Rap Sample Sample Group Entry
+func DecodeRapSampleGroupEntry(name string, length uint32, sr bits.SliceReader) (SampleGroupEntry, error) {
 	entry := &RapSampleGroupEntry{}
 	byt := sr.ReadUint8()
 	entry.NumLeadingSamplesKnown = byt >> 7
@@ -203,15 +223,18 @@ func DecodeRapSampleGroupEntry(name string, length uint32, sr *SliceReader) (Sam
 	return entry, nil
 }
 
+// Type - GroupingType SampleGroupEntry (uint32 according to spec)
 func (s *RapSampleGroupEntry) Type() string {
 	return "rap "
 }
 
+// Size of sample group entry
 func (s *RapSampleGroupEntry) Size() uint64 {
 	return 1
 }
 
-func (s *RapSampleGroupEntry) Encode(sw *SliceWriter) {
+// Encode SampleGroupEntry to SliceWriter
+func (s *RapSampleGroupEntry) Encode(sw bits.SliceWriter) {
 	var byt uint8
 	byt |= (s.NumLeadingSamplesKnown << 7)
 	byt |= (s.NumLeadingSamples)
@@ -237,10 +260,12 @@ type AlstSampleGroupEntry struct {
 	NumTotalSamples   []uint16
 }
 
+// Type - GroupingType SampleGroupEntry (uint32 according to spec)
 func (s *AlstSampleGroupEntry) Type() string {
 	return "alst "
 }
 
+// Size of sample group entry
 func (s *AlstSampleGroupEntry) Size() uint64 {
 	// RollCount: 2
 	// FirstOutputSample: 2
@@ -250,7 +275,8 @@ func (s *AlstSampleGroupEntry) Size() uint64 {
 	return uint64(4 + 4*len(s.SampleOffset) + 2*len(s.NumOutputSamples) + 2*len(s.NumTotalSamples))
 }
 
-func DecodeAlstSampleGroupEntry(name string, length uint32, sr *SliceReader) (SampleGroupEntry, error) {
+// DecodeAlstSampleGroupEntry - decode ALST Sample Group Entry
+func DecodeAlstSampleGroupEntry(name string, length uint32, sr bits.SliceReader) (SampleGroupEntry, error) {
 	entry := &AlstSampleGroupEntry{}
 	entry.RollCount = sr.ReadUint16()
 	entry.FirstOutputSample = sr.ReadUint16()
@@ -275,7 +301,8 @@ func DecodeAlstSampleGroupEntry(name string, length uint32, sr *SliceReader) (Sa
 	return entry, nil
 }
 
-func (s *AlstSampleGroupEntry) Encode(sw *SliceWriter) {
+// Encode SampleGroupEntry to SliceWriter
+func (s *AlstSampleGroupEntry) Encode(sw bits.SliceWriter) {
 	sw.WriteUint16(s.RollCount)
 	sw.WriteUint16(s.FirstOutputSample)
 	for _, offset := range s.SampleOffset {

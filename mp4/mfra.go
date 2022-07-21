@@ -2,6 +2,8 @@ package mp4
 
 import (
 	"io"
+
+	"github.com/edgeware/mp4ff/bits"
 )
 
 // MfraBox - Movie Fragment Random Access Box (mfra)
@@ -15,8 +17,25 @@ type MfraBox struct {
 }
 
 // DecodeMfra - box-specific decode
-func DecodeMfra(hdr *boxHeader, startPos uint64, r io.Reader) (Box, error) {
-	children, err := DecodeContainerChildren(hdr, startPos+8, startPos+hdr.size, r)
+func DecodeMfra(hdr BoxHeader, startPos uint64, r io.Reader) (Box, error) {
+	children, err := DecodeContainerChildren(hdr, startPos+8, startPos+hdr.Size, r)
+	if err != nil {
+		return nil, err
+	}
+	m := &MfraBox{}
+	m.StartPos = startPos
+	for _, box := range children {
+		err := m.AddChild(box)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return m, nil
+}
+
+// DecodeMfraSR - box-specific decode
+func DecodeMfraSR(hdr BoxHeader, startPos uint64, sr bits.SliceReader) (Box, error) {
+	children, err := DecodeContainerChildrenSR(hdr, startPos+8, startPos+hdr.Size, sr)
 	if err != nil {
 		return nil, err
 	}
@@ -56,19 +75,14 @@ func (m *MfraBox) Size() uint64 {
 	return containerSize(m.Children)
 }
 
-// Encode - byte-specific encode
+// Encode - write mfra container to w
 func (m *MfraBox) Encode(w io.Writer) error {
-	err := EncodeHeader(m, w)
-	if err != nil {
-		return err
-	}
-	for _, b := range m.Children {
-		err = b.Encode(w)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	return EncodeContainer(m, w)
+}
+
+// EncodeSW- write mfra container via sw
+func (m *MfraBox) EncodeSW(sw bits.SliceWriter) error {
+	return EncodeContainerSW(m, sw)
 }
 
 // GetChildren - list of child boxes
@@ -76,6 +90,7 @@ func (m *MfraBox) GetChildren() []Box {
 	return m.Children
 }
 
+// Info - write box-specific information
 func (m *MfraBox) Info(w io.Writer, specificBoxLevels, indent, indentStep string) error {
 	return ContainerInfo(m, w, specificBoxLevels, indent, indentStep)
 }

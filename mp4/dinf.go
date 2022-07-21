@@ -2,6 +2,8 @@ package mp4
 
 import (
 	"io"
+
+	"github.com/edgeware/mp4ff/bits"
 )
 
 // DinfBox - Data Information Box (dinf - mandatory)
@@ -23,14 +25,27 @@ func (d *DinfBox) AddChild(box Box) {
 }
 
 // DecodeDinf - box-specific decode
-func DecodeDinf(hdr *boxHeader, startPos uint64, r io.Reader) (Box, error) {
-	l, err := DecodeContainerChildren(hdr, startPos+8, startPos+hdr.size, r)
+func DecodeDinf(hdr BoxHeader, startPos uint64, r io.Reader) (Box, error) {
+	l, err := DecodeContainerChildren(hdr, startPos+8, startPos+hdr.Size, r)
 	if err != nil {
 		return nil, err
 	}
 	d := &DinfBox{}
 	for _, b := range l {
 		d.AddChild(b)
+	}
+	return d, nil
+}
+
+// DecodeDinfSR - box-specific decode
+func DecodeDinfSR(hdr BoxHeader, startPos uint64, sr bits.SliceReader) (Box, error) {
+	children, err := DecodeContainerChildrenSR(hdr, startPos+8, startPos+hdr.Size, sr)
+	if err != nil {
+		return nil, err
+	}
+	d := &DinfBox{}
+	for _, c := range children {
+		d.AddChild(c)
 	}
 	return d, nil
 }
@@ -55,6 +70,12 @@ func (d *DinfBox) Encode(w io.Writer) error {
 	return EncodeContainer(d, w)
 }
 
+// EncodeSW - write container using slice writer
+func (d *DinfBox) EncodeSW(sw bits.SliceWriter) error {
+	return EncodeContainerSW(d, sw)
+}
+
+// Info - write box info to w
 func (d *DinfBox) Info(w io.Writer, specificBoxLevels, indent, indentStep string) error {
 	return ContainerInfo(d, w, specificBoxLevels, indent, indentStep)
 }

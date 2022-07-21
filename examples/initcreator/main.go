@@ -1,4 +1,4 @@
-// initcreator - create init segments for AVC video and AAC audio.
+// initcreator - create example init segments for video, audio, and subtitles
 package main
 
 import (
@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/jaypadia-frame/mp4ff/aac"
+	"github.com/jaypadia-frame/mp4ff/bits"
 	"github.com/jaypadia-frame/mp4ff/mp4"
 )
 
@@ -33,6 +34,22 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
+	err = writeAudioAC3InitSegment()
+	if err != nil {
+		log.Fatalln(err)
+	}
+	err = writeAudioEC3InitSegment()
+	if err != nil {
+		log.Fatalln(err)
+	}
+	err = writeSubtitlesWvttInitSegment()
+	if err != nil {
+		log.Fatalln(err)
+	}
+	err = writeSubtitlesStppInitSegment()
+	if err != nil {
+		log.Fatalln(err)
+	}
 }
 
 func writeVideoAVCInitSegment() error {
@@ -45,7 +62,8 @@ func writeVideoAVCInitSegment() error {
 	init := mp4.CreateEmptyInit()
 	init.AddEmptyTrack(videoTimescale, "video", "und")
 	trak := init.Moov.Trak
-	err := trak.SetAVCDescriptor("avc1", spsNALUs, ppsNALUs)
+	includePS := true
+	err := trak.SetAVCDescriptor("avc1", spsNALUs, ppsNALUs, includePS)
 	if err != nil {
 		return err
 	}
@@ -70,7 +88,7 @@ func writeVideoHEVCInitSegment() error {
 	init := mp4.CreateEmptyInit()
 	init.AddEmptyTrack(videoTimescale, "video", "und")
 	trak := init.Moov.Trak
-	err := trak.SetHEVCDescriptor("hvc1", vpsNALUs, spsNALUs, ppsNALUs)
+	err := trak.SetHEVCDescriptor("hvc1", vpsNALUs, spsNALUs, ppsNALUs, true)
 	if err != nil {
 		return err
 	}
@@ -93,6 +111,82 @@ func writeAudioAACInitSegment() error {
 		return err
 	}
 	err = writeToFile(init, "audio_aac_init.cmfa")
+	return err
+}
+
+func writeAudioAC3InitSegment() error {
+	dac3Hex := "0000000b646163330c3dc0"
+	dac3Bytes, err := hex.DecodeString(dac3Hex)
+	if err != nil {
+		return err
+	}
+	sr := bits.NewFixedSliceReader(dac3Bytes)
+	box, err := mp4.DecodeBoxSR(0, sr)
+	if err != nil {
+		return err
+	}
+	dac3 := box.(*mp4.Dac3Box)
+	init := mp4.CreateEmptyInit()
+	samplingRate := mp4.AC3SampleRates[dac3.FSCod]
+	init.AddEmptyTrack(uint32(samplingRate), "audio", "en")
+	trak := init.Moov.Trak
+	err = trak.SetAC3Descriptor(dac3)
+	if err != nil {
+		return err
+	}
+	err = writeToFile(init, "audio_ac3_init.cmfa")
+	return err
+}
+
+func writeAudioEC3InitSegment() error {
+	dec3Hex := "0000000e646563330c00200f0202"
+	dec3Bytes, err := hex.DecodeString(dec3Hex)
+	if err != nil {
+		return err
+	}
+	sr := bits.NewFixedSliceReader(dec3Bytes)
+	box, err := mp4.DecodeBoxSR(0, sr)
+	if err != nil {
+		return err
+	}
+	dec3 := box.(*mp4.Dec3Box)
+	init := mp4.CreateEmptyInit()
+	samplingRate := mp4.AC3SampleRates[dec3.EC3Subs[0].FSCod]
+	init.AddEmptyTrack(uint32(samplingRate), "audio", "en")
+	trak := init.Moov.Trak
+	err = trak.SetEC3Descriptor(dec3)
+	if err != nil {
+		return err
+	}
+	err = writeToFile(init, "audio_ec3_init.cmfa")
+	return err
+}
+
+func writeSubtitlesWvttInitSegment() error {
+	subtitleTimescale := 1000
+	init := mp4.CreateEmptyInit()
+	init.AddEmptyTrack(uint32(subtitleTimescale), "wvtt", "en")
+	trak := init.Moov.Trak
+	err := trak.SetWvttDescriptor("WEBVTT")
+	if err != nil {
+		return err
+	}
+	err = writeToFile(init, "subtitles_wvtt_init.cmft")
+	return err
+}
+
+func writeSubtitlesStppInitSegment() error {
+	subtitleTimescale := 1000
+	init := mp4.CreateEmptyInit()
+	init.AddEmptyTrack(uint32(subtitleTimescale), "stpp", "en")
+	trak := init.Moov.Trak
+	schemaLocation := ""
+	auxiliaryMimeType := ""
+	err := trak.SetStppDescriptor("http://www.w3.org/ns/ttml", schemaLocation, auxiliaryMimeType)
+	if err != nil {
+		return err
+	}
+	err = writeToFile(init, "subtitles_stpp_init.cmft")
 	return err
 }
 

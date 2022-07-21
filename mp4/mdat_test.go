@@ -115,8 +115,8 @@ func TestReadData_LazyMdatMode(t *testing.T) {
 	}
 
 	lazyMdat := &MdatBox{
-		StartPos:        0,
-		decLazyDataSize: 6,
+		StartPos:     0,
+		lazyDataSize: 6,
 	}
 
 	// test ReadData with provided ReadSeeker
@@ -172,8 +172,8 @@ func TestCopyData_LazyMdatMode(t *testing.T) {
 	}
 
 	lazyMdat := &MdatBox{
-		StartPos:        0,
-		decLazyDataSize: 6,
+		StartPos:     0,
+		lazyDataSize: 6,
 	}
 
 	// test ReadData with provided ReadSeeker
@@ -191,5 +191,32 @@ func TestCopyData_LazyMdatMode(t *testing.T) {
 
 	if !bytes.Equal(outBuffer.Bytes(), expected) {
 		t.Errorf("expected %v, got %v", expected, outBuffer.Bytes())
+	}
+}
+
+// TestAddParts - adding parts to mdat should give the same result as one big slice
+func TestAddParts(t *testing.T) {
+	mdat := &MdatBox{}
+	part1 := []byte{0, 1, 2, 3, 4}
+	part2 := []byte{5, 6, 7, 8}
+	mdat.AddSampleData(part1)
+	mdat.AddSampleData(part2)
+
+	expMdat := &MdatBox{Data: []byte{0, 1, 2, 3, 4, 5, 6, 7, 8}}
+	out := make([]byte, 17)
+	outBuf := bytes.NewBuffer(out)
+	err := mdat.Encode(outBuf)
+	if err != nil {
+		t.Error(err)
+	}
+
+	outExp := make([]byte, 17)
+	outBufExp := bytes.NewBuffer(outExp)
+	err = expMdat.Encode(outBufExp)
+	if err != nil {
+		t.Error(err)
+	}
+	if !bytes.Equal(outBuf.Bytes(), outBufExp.Bytes()) {
+		t.Errorf("expected %v, got %v", outBufExp.Bytes(), outBuf.Bytes())
 	}
 }

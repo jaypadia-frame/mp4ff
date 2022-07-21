@@ -8,11 +8,15 @@ import (
 	"github.com/jaypadia-frame/mp4ff/bits"
 )
 
-var ErrNoSliceHeader = errors.New("No slice header")
-var ErrInvalidSliceType = errors.New("Invalid slice type")
-var ErrTooFewBytesToParse = errors.New("Too few bytes to parse symbol")
-var ErrParserNotImplemented = errors.New("Parser not implemented")
+// Errors for parsing and handling AVC slices
+var (
+	ErrNoSliceHeader        = errors.New("No slice header")
+	ErrInvalidSliceType     = errors.New("Invalid slice type")
+	ErrTooFewBytesToParse   = errors.New("Too few bytes to parse symbol")
+	ErrParserNotImplemented = errors.New("Parser not implemented")
+)
 
+// SliceType - AVC slice type
 type SliceType uint
 
 func (s SliceType) String() string {
@@ -23,11 +27,16 @@ func (s SliceType) String() string {
 		return "P"
 	case SLICE_B:
 		return "B"
+	case SLICE_SI:
+		return "SI"
+	case SLICE_SP:
+		return "SP"
 	default:
 		return ""
 	}
 }
 
+// AVC slice types
 const (
 	SLICE_P  = SliceType(0)
 	SLICE_B  = SliceType(1)

@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+
+	"github.com/edgeware/mp4ff/bits"
 )
 
 // StsdBox - Sample Description Box (stsd - manatory)
@@ -17,6 +19,8 @@ type StsdBox struct {
 	AvcX        *VisualSampleEntryBox
 	HvcX        *VisualSampleEntryBox
 	Mp4a        *AudioSampleEntryBox
+	AC3         *AudioSampleEntryBox
+	EC3         *AudioSampleEntryBox
 	Wvtt        *WvttBox
 	Children    []Box
 }
@@ -35,6 +39,10 @@ func (s *StsdBox) AddChild(box Box) {
 		s.HvcX = box.(*VisualSampleEntryBox)
 	case "mp4a":
 		s.Mp4a = box.(*AudioSampleEntryBox)
+	case "ac-3":
+		s.AC3 = box.(*AudioSampleEntryBox)
+	case "ec-3":
+		s.EC3 = box.(*AudioSampleEntryBox)
 	case "wvtt":
 		s.Wvtt = box.(*WvttBox)
 	}
@@ -42,7 +50,7 @@ func (s *StsdBox) AddChild(box Box) {
 	s.SampleCount++
 }
 
-// AddChild - Replace a child box with one of the same type
+// ReplaceChild - Replace a child box with one of the same type
 func (s *StsdBox) ReplaceChild(box Box) {
 	switch box.(type) {
 	case *VisualSampleEntryBox:
@@ -75,7 +83,7 @@ func (s *StsdBox) GetSampleDescription(index int) (Box, error) {
 }
 
 // DecodeStsd - box-specific decode
-func DecodeStsd(hdr *boxHeader, startPos uint64, r io.Reader) (Box, error) {
+func DecodeStsd(hdr BoxHeader, startPos uint64, r io.Reader) (Box, error) {
 	var versionAndFlags, sampleCount uint32
 	err := binary.Read(r, binary.BigEndian, &versionAndFlags)
 	if err != nil {
@@ -86,7 +94,7 @@ func DecodeStsd(hdr *boxHeader, startPos uint64, r io.Reader) (Box, error) {
 		return nil, err
 	}
 	//Note higher startPos below since not simple container
-	children, err := DecodeContainerChildren(hdr, startPos+16, startPos+hdr.size, r)
+	children, err := DecodeContainerChildren(hdr, startPos+16, startPos+hdr.Size, r)
 	if err != nil {
 		return nil, err
 	}
@@ -105,6 +113,33 @@ func DecodeStsd(hdr *boxHeader, startPos uint64, r io.Reader) (Box, error) {
 		return nil, fmt.Errorf("Stsd sample count mismatch")
 	}
 	return stsd, nil
+}
+
+// DecodeStsdSR - box-specific decode
+func DecodeStsdSR(hdr BoxHeader, startPos uint64, sr bits.SliceReader) (Box, error) {
+	versionAndFlags := sr.ReadUint32()
+	sampleCount := sr.ReadUint32()
+	//Note higher startPos below since not simple container
+	children, err := DecodeContainerChildrenSR(hdr, startPos+16, startPos+hdr.Size, sr)
+	if err != nil {
+		return nil, err
+	}
+	if len(children) != int(sampleCount) {
+		return nil, fmt.Errorf("Stsd sample count  mismatch")
+	}
+	stsd := StsdBox{
+		Version:     byte(versionAndFlags >> 24),
+		Flags:       versionAndFlags & flagsMask,
+		SampleCount: 0, // set by  AddChild
+		Children:    make([]Box, 0, len(children)),
+	}
+	for _, box := range children {
+		stsd.AddChild(box)
+	}
+	if stsd.SampleCount != sampleCount {
+		return nil, fmt.Errorf("Stsd sample count mismatch")
+	}
+	return &stsd, nil
 }
 
 // Type - box-specific type
@@ -141,6 +176,25 @@ func (s *StsdBox) Encode(w io.Writer) error {
 	return nil
 }
 
+// EncodeSW - box-specific encode of stsd - not a usual container
+func (s *StsdBox) EncodeSW(sw bits.SliceWriter) error {
+	err := EncodeHeaderSW(s, sw)
+	if err != nil {
+		return err
+	}
+	versionAndFlags := (uint32(s.Version) << 24) + s.Flags
+	sw.WriteUint32(versionAndFlags)
+	sw.WriteUint32(s.SampleCount)
+	for _, c := range s.Children {
+		err = c.EncodeSW(sw)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Info - write box-specific information
 func (s *StsdBox) Info(w io.Writer, specificBoxLevels, indent, indentStep string) error {
 	bd := newInfoDumper(w, indent, s, int(s.Version), s.Flags)
 	if bd.err != nil {

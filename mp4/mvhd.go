@@ -2,7 +2,9 @@ package mp4
 
 import (
 	"io"
-	"io/ioutil"
+	"time"
+
+	"github.com/edgeware/mp4ff/bits"
 )
 
 // MvhdBox - Movie Header Box (mvhd - mandatory)
@@ -36,13 +38,18 @@ func CreateMvhd() *MvhdBox {
 }
 
 // DecodeMvhd - box-specific decode
-func DecodeMvhd(hdr *boxHeader, startPos uint64, r io.Reader) (Box, error) {
-	data, err := ioutil.ReadAll(r)
+func DecodeMvhd(hdr BoxHeader, startPos uint64, r io.Reader) (Box, error) {
+	data, err := readBoxBody(r, hdr)
 	if err != nil {
 		return nil, err
 	}
-	s := NewSliceReader(data)
-	versionAndFlags := s.ReadUint32()
+	sr := bits.NewFixedSliceReader(data)
+	return DecodeMvhdSR(hdr, startPos, sr)
+}
+
+// DecodeMvhdSR - box-specific decode
+func DecodeMvhdSR(hdr BoxHeader, startPos uint64, sr bits.SliceReader) (Box, error) {
+	versionAndFlags := sr.ReadUint32()
 	version := byte(versionAndFlags >> 24)
 
 	m := &MvhdBox{
@@ -51,23 +58,23 @@ func DecodeMvhd(hdr *boxHeader, startPos uint64, r io.Reader) (Box, error) {
 	}
 
 	if version == 1 {
-		m.CreationTime = s.ReadUint64()
-		m.ModificationTime = s.ReadUint64()
-		m.Timescale = s.ReadUint32()
-		m.Duration = s.ReadUint64()
+		m.CreationTime = sr.ReadUint64()
+		m.ModificationTime = sr.ReadUint64()
+		m.Timescale = sr.ReadUint32()
+		m.Duration = sr.ReadUint64()
 	} else {
-		m.CreationTime = uint64(s.ReadUint32())
-		m.ModificationTime = uint64(s.ReadUint32())
-		m.Timescale = s.ReadUint32()
-		m.Duration = uint64(s.ReadUint32())
+		m.CreationTime = uint64(sr.ReadUint32())
+		m.ModificationTime = uint64(sr.ReadUint32())
+		m.Timescale = sr.ReadUint32()
+		m.Duration = uint64(sr.ReadUint32())
 	}
-	m.Rate = Fixed32(s.ReadUint32())
-	m.Volume = Fixed16(s.ReadUint16())
-	s.SkipBytes(10) // Reserved bytes
-	s.SkipBytes(36) // Matrix patterndata
-	s.SkipBytes(24) // Predefined 0
-	m.NextTrackID = s.ReadUint32()
-	return m, nil
+	m.Rate = Fixed32(sr.ReadUint32())
+	m.Volume = Fixed16(sr.ReadUint16())
+	sr.SkipBytes(10) // Reserved bytes
+	sr.SkipBytes(36) // Matrix patterndata
+	sr.SkipBytes(24) // Predefined 0
+	m.NextTrackID = sr.ReadUint32()
+	return m, sr.AccError()
 }
 
 // Type - return box type
@@ -85,12 +92,21 @@ func (b *MvhdBox) Size() uint64 {
 
 // Encode - write box to w
 func (b *MvhdBox) Encode(w io.Writer) error {
-	err := EncodeHeader(b, w)
+	sw := bits.NewFixedSliceWriter(int(b.Size()))
+	err := b.EncodeSW(sw)
 	if err != nil {
 		return err
 	}
-	buf := makebuf(b)
-	sw := NewSliceWriter(buf)
+	_, err = w.Write(sw.Bytes())
+	return err
+}
+
+// EncodeSW - box-specific encode to slicewriter
+func (b *MvhdBox) EncodeSW(sw bits.SliceWriter) error {
+	err := EncodeHeaderSW(b, sw)
+	if err != nil {
+		return err
+	}
 	versionAndFlags := (uint32(b.Version) << 24) + b.Flags
 	sw.WriteUint32(versionAndFlags)
 	if b.Version == 0 {
@@ -112,13 +128,26 @@ func (b *MvhdBox) Encode(w io.Writer) error {
 	sw.WriteZeroBytes(24) // Predefined 0
 	sw.WriteUint32(b.NextTrackID)
 
-	_, err = w.Write(buf)
-	return err
+	return sw.AccError()
 }
 
+// Info - write box-specific information
 func (b *MvhdBox) Info(w io.Writer, specificBoxLevels, indent, indentStep string) error {
 	bd := newInfoDumper(w, indent, b, int(b.Version), b.Flags)
 	bd.write(" - timeScale: %d", b.Timescale)
 	bd.write(" - duration: %d", b.Duration)
+	bd.write(" - creation time: %s", timeStr(b.CreationTime))
+	bd.write(" - modification time: %s", timeStr(b.ModificationTime))
 	return bd.err
+}
+
+// Make time string from t which is seconds since Jan. 1 1904
+func timeStr(t uint64) string {
+	epochDiffS := int64((66*365 + 16) * 24 * 3600)
+	unixSeconds := int64(t) - epochDiffS
+	if unixSeconds < 0 {
+		return "0"
+	}
+	ut := time.Unix(unixSeconds, 0)
+	return ut.UTC().Format("2006-01-02T15:04:05Z")
 }
