@@ -2,7 +2,10 @@ package mp4
 
 import (
 	"errors"
+	"fmt"
 	"io"
+
+	"github.com/edgeware/mp4ff/bits"
 )
 
 // TrafBox - Track Fragment Box (traf)
@@ -12,25 +15,98 @@ import (
 type TrafBox struct {
 	Tfhd     *TfhdBox
 	Tfdt     *TfdtBox
+	Saiz     *SaizBox
+	Saio     *SaioBox
+	Sbgp     *SbgpBox
+	Sgpd     *SgpdBox
+	Senc     *SencBox
 	Trun     *TrunBox // The first TrunBox
 	Truns    []*TrunBox
 	Children []Box
 }
 
 // DecodeTraf - box-specific decode
-func DecodeTraf(hdr *boxHeader, startPos uint64, r io.Reader) (Box, error) {
-	children, err := DecodeContainerChildren(hdr, startPos, startPos+hdr.size, r)
+func DecodeTraf(hdr BoxHeader, startPos uint64, r io.Reader) (Box, error) {
+	children, err := DecodeContainerChildren(hdr, startPos+8, startPos+hdr.Size, r)
 	if err != nil {
 		return nil, err
 	}
-	t := &TrafBox{}
-	for _, b := range children {
-		err := t.AddChild(b)
+	t := &TrafBox{Children: make([]Box, 0, len(children))}
+	for _, child := range children {
+		err := t.AddChild(child)
 		if err != nil {
 			return nil, err
 		}
 	}
 	return t, nil
+}
+
+// DecodeTrafSR - box-specific decode
+func DecodeTrafSR(hdr BoxHeader, startPos uint64, sr bits.SliceReader) (Box, error) {
+	children, err := DecodeContainerChildrenSR(hdr, startPos+8, startPos+hdr.Size, sr)
+	if err != nil {
+		return nil, err
+	}
+	t := &TrafBox{Children: make([]Box, 0, len(children))}
+	for _, child := range children {
+		err := t.AddChild(child)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return t, nil
+}
+
+// ContainsSencBox - is there a senc box in traf and is it parsed
+// If not parsed, call ParseReadSenc to parse it
+func (t *TrafBox) ContainsSencBox() (ok, parsed bool) {
+	if t.Senc != nil {
+		return true, !t.Senc.readButNotParsed
+	}
+	return false, false
+}
+
+func (t *TrafBox) ParseReadSenc(defaultIVSize byte, moofStartPos uint64) error {
+	if t.Senc == nil {
+		return fmt.Errorf("no senc box")
+	}
+	if t.Saio != nil {
+		// saio should be present, but we try without it, if it doesn't exist
+		posFromSaio := t.Saio.Offset[0] + int64(moofStartPos)
+		if uint64(posFromSaio) != t.Senc.StartPos+16 {
+			return fmt.Errorf("offset from saio (%d) and moof differs from senc data start %d", posFromSaio, t.Senc.StartPos+16)
+		}
+	}
+	perSampleIVSize := defaultIVSize
+	if t.Sbgp != nil && t.Sgpd != nil {
+		sbgp, sgpd := t.Sbgp, t.Sgpd
+		if sbgp.GroupingType != "seig" {
+			return fmt.Errorf("sbgp grouping type %s not supported", sbgp.GroupingType)
+		}
+		nrSbgpEntries := len(sbgp.SampleCounts)
+		if nrSbgpEntries != 1 {
+			return fmt.Errorf("sbgp entries = %d, only 1 supported for now", nrSbgpEntries)
+		}
+		sgpdEntryNr := sbgp.GroupDescriptionIndices[0]
+		if sgpdEntryNr != sbgpInsideOffset+1 {
+			return fmt.Errorf("sgpd entry number must be first inside = 65536 + 1")
+		}
+		if sgpd.GroupingType != "seig" {
+			return fmt.Errorf("sgpd grouping type %s not supported", sgpd.GroupingType)
+		}
+
+		sgpdEntry := sgpd.SampleGroupEntries[sgpdEntryNr-sbgpInsideOffset-1]
+		if sgpdEntry.Type() != "seig" {
+			return fmt.Errorf("expected sgpd entry type seig but found %q", sgpdEntry.Type())
+		}
+		seigEntry := sgpdEntry.(*SeigSampleGroupEntry)
+		perSampleIVSize = seigEntry.PerSampleIVSize
+	}
+	err := t.Senc.ParseReadBox(perSampleIVSize, t.Saiz)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // AddChild - add child box
@@ -40,6 +116,16 @@ func (t *TrafBox) AddChild(b Box) error {
 		t.Tfhd = b.(*TfhdBox)
 	case "tfdt":
 		t.Tfdt = b.(*TfdtBox)
+	case "saiz":
+		t.Saiz = b.(*SaizBox)
+	case "saio":
+		t.Saio = b.(*SaioBox)
+	case "sbgp":
+		t.Sbgp = b.(*SbgpBox)
+	case "sgpd":
+		t.Sgpd = b.(*SgpdBox)
+	case "senc":
+		t.Senc = b.(*SencBox)
 	case "trun":
 		if t.Trun == nil {
 			t.Trun = b.(*TrunBox)
@@ -71,6 +157,12 @@ func (t *TrafBox) Encode(w io.Writer) error {
 	return EncodeContainer(t, w)
 }
 
+// Encode - write minf container to sw
+func (b *TrafBox) EncodeSW(sw bits.SliceWriter) error {
+	return EncodeContainerSW(b, sw)
+}
+
+// Info - write box-specific information
 func (t *TrafBox) Info(w io.Writer, specificBoxLevels, indent, indentStep string) error {
 	return ContainerInfo(t, w, specificBoxLevels, indent, indentStep)
 }
@@ -101,7 +193,7 @@ func (t *TrafBox) OptimizeTfhdTrun() error {
 			// Set defaultSampleDuration in tfhd and remove from trun
 			tfhd.Flags = tfhd.Flags | defaultSampleDurationPresent
 			tfhd.DefaultSampleDuration = commonDur
-			trun.flags = trun.flags & ^sampleDurationPresentFlag
+			trun.Flags = trun.Flags & ^TrunSampleDurationPresentFlag
 		}
 	}
 
@@ -118,7 +210,7 @@ func (t *TrafBox) OptimizeTfhdTrun() error {
 			// Set defaultSampleSize in tfhd and remove from trun
 			tfhd.Flags = tfhd.Flags | defaultSampleSizePresent
 			tfhd.DefaultSampleSize = commonSize
-			trun.flags = trun.flags & ^sampleSizePresentFlag
+			trun.Flags = trun.Flags & ^TrunSampleSizePresentFlag
 		}
 	}
 
@@ -136,26 +228,48 @@ func (t *TrafBox) OptimizeTfhdTrun() error {
 		}
 		if hasCommonFlags {
 			if firstSampleFlags != commonSampleFlags {
-				trun.firstSampleFlags = firstSampleFlags
-				trun.flags |= firstSampleFlagsPresentFlag
+				trun.SetFirstSampleFlags(firstSampleFlags)
 			}
 			tfhd.Flags = tfhd.Flags | defaultSampleFlagsPresent
 			tfhd.DefaultSampleFlags = commonSampleFlags
-			trun.flags = trun.flags & ^sampleFlagsPresentFlag
+			trun.Flags = trun.Flags & ^TrunSampleFlagsPresentFlag
 		}
 	}
 
-	if trun.HasSampleCTO() {
+	if trun.HasSampleCompositionTimeOffset() {
 		allZeroCTO := true
 		for _, s := range trun.Samples {
-			if s.Cto != 0 {
+			if s.CompositionTimeOffset != 0 {
 				allZeroCTO = false
 				break
 			}
 		}
 		if allZeroCTO {
-			trun.flags = trun.flags & ^sampleCTOPresentFlag
+			trun.Flags = trun.Flags & ^TrunSampleCompositionTimeOffsetPresentFlag
 		}
 	}
 	return nil
+}
+
+//RemoveEncryptionBoxes - remove encryption boxes and return number of bytes removed
+func (t *TrafBox) RemoveEncryptionBoxes() uint64 {
+	remainingChildren := make([]Box, 0, len(t.Children))
+	var nrBytesRemoved uint64 = 0
+	for _, ch := range t.Children {
+		switch ch.Type() {
+		case "saiz":
+			nrBytesRemoved += ch.Size()
+			t.Saiz = nil
+		case "saio":
+			nrBytesRemoved += ch.Size()
+			t.Saio = nil
+		case "senc":
+			nrBytesRemoved += ch.Size()
+			t.Senc = nil
+		default:
+			remainingChildren = append(remainingChildren, ch)
+		}
+	}
+	t.Children = remainingChildren
+	return nrBytesRemoved
 }

@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
+
+	"github.com/edgeware/mp4ff/bits"
 )
 
 // AudioSampleEntryBox according to ISO/IEC 14496-12
@@ -15,6 +16,9 @@ type AudioSampleEntryBox struct {
 	SampleSize         uint16
 	SampleRate         uint16 // Integer part
 	Esds               *EsdsBox
+	Dac3               *Dac3Box
+	Dec3               *Dec3Box
+	Sinf               *SinfBox
 	Children           []Box
 }
 
@@ -48,40 +52,45 @@ func CreateAudioSampleEntryBox(name string, nrChannels, sampleSize, sampleRate u
 }
 
 // AddChild - add a child box (avcC normally, but clap and pasp could be part of visual entry)
-func (a *AudioSampleEntryBox) AddChild(b Box) {
-	switch b.Type() {
+func (a *AudioSampleEntryBox) AddChild(child Box) {
+	switch child.Type() {
 	case "esds":
-		a.Esds = b.(*EsdsBox)
+		a.Esds = child.(*EsdsBox)
+	case "dac3":
+		a.Dac3 = child.(*Dac3Box)
+	case "dec3":
+		a.Dec3 = child.(*Dec3Box)
+	case "sinf":
+		a.Sinf = child.(*SinfBox)
 	}
 
-	a.Children = append(a.Children, b)
+	a.Children = append(a.Children, child)
 }
 
 const nrAudioSampleBytesBeforeChildren = 36
 
 // DecodeAudioSampleEntry - decode mp4a... box
-func DecodeAudioSampleEntry(hdr *boxHeader, startPos uint64, r io.Reader) (Box, error) {
-	data, err := ioutil.ReadAll(r)
+func DecodeAudioSampleEntry(hdr BoxHeader, startPos uint64, r io.Reader) (Box, error) {
+	data, err := readBoxBody(r, hdr)
 	if err != nil {
 		return nil, err
 	}
-	s := NewSliceReader(data)
-
-	a := NewAudioSampleEntryBox(hdr.name)
+	sr := bits.NewFixedSliceReader(data)
+	a := NewAudioSampleEntryBox(hdr.Name)
 
 	// 14496-12 8.5.2.2 Sample entry (8 bytes)
-	s.SkipBytes(6) // Skip 6 reserved bytes
-	a.DataReferenceIndex = s.ReadUint16()
+	sr.SkipBytes(6) // Skip 6 reserved bytes
+	a.DataReferenceIndex = sr.ReadUint16()
 
 	// 14496-12 12.2.3.2 Audio Sample entry (20 bytes)
 
-	s.SkipBytes(8) //  reserved == 0
-	a.ChannelCount = s.ReadUint16()
-	a.SampleSize = s.ReadUint16()
-	s.SkipBytes(4) // Predefined + reserved
-	a.SampleRate = makeUint16FromFixed32(s.ReadUint32())
+	sr.SkipBytes(8) //  reserved == 0
+	a.ChannelCount = sr.ReadUint16()
+	a.SampleSize = sr.ReadUint16()
+	sr.SkipBytes(4) // Predefined + reserved
+	a.SampleRate = makeUint16FromFixed32(sr.ReadUint32())
 
-	remaining := s.RemainingBytes()
+	remaining := sr.RemainingBytes()
 	restReader := bytes.NewReader(remaining)
 
 	pos := startPos + nrAudioSampleBytesBeforeChildren // Size of all previous data
@@ -96,13 +105,47 @@ func DecodeAudioSampleEntry(hdr *boxHeader, startPos uint64, r io.Reader) (Box, 
 			a.AddChild(box)
 			pos += box.Size()
 		}
-		if pos == startPos+hdr.size {
+		if pos == startPos+hdr.Size {
 			break
-		} else if pos > startPos+hdr.size {
-			return nil, fmt.Errorf("Bad size when decoding %s", hdr.name)
+		} else if pos > startPos+hdr.Size {
+			return nil, fmt.Errorf("Bad size when decoding %s", hdr.Name)
 		}
 	}
 	return a, nil
+}
+
+// DecodeAudioSampleEntry - decode mp4a... box
+func DecodeAudioSampleEntrySR(hdr BoxHeader, startPos uint64, sr bits.SliceReader) (Box, error) {
+	a := NewAudioSampleEntryBox(hdr.Name)
+
+	// 14496-12 8.5.2.2 Sample entry (8 bytes)
+	sr.SkipBytes(6) // Skip 6 reserved bytes
+	a.DataReferenceIndex = sr.ReadUint16()
+
+	// 14496-12 12.2.3.2 Audio Sample entry (20 bytes)
+
+	sr.SkipBytes(8) //  reserved == 0
+	a.ChannelCount = sr.ReadUint16()
+	a.SampleSize = sr.ReadUint16()
+	sr.SkipBytes(4) // Predefined + reserved
+	a.SampleRate = makeUint16FromFixed32(sr.ReadUint32())
+
+	pos := startPos + nrAudioSampleBytesBeforeChildren // Size of all previous data
+	lastPos := startPos + hdr.Size
+	for {
+		if pos >= lastPos {
+			break
+		}
+		box, err := DecodeBoxSR(pos, sr)
+		if err != nil {
+			return nil, err
+		}
+		if box != nil {
+			a.AddChild(box)
+			pos += box.Size()
+		}
+	}
+	return a, sr.AccError()
 }
 
 // Type - return box type
@@ -126,7 +169,7 @@ func (a *AudioSampleEntryBox) Encode(w io.Writer) error {
 		return err
 	}
 	buf := makebuf(a)
-	sw := NewSliceWriter(buf)
+	sw := bits.NewFixedSliceWriterFromSlice(buf)
 	sw.WriteZeroBytes(6)
 	sw.WriteUint16(a.DataReferenceIndex)
 	sw.WriteZeroBytes(8) // pre_defined and reserved
@@ -135,7 +178,7 @@ func (a *AudioSampleEntryBox) Encode(w io.Writer) error {
 	sw.WriteZeroBytes(4)                          // Pre-defined and reserved
 	sw.WriteUint32(makeFixed32Uint(a.SampleRate)) // nrAudioSampleBytesBeforeChildren bytes this far
 
-	_, err = w.Write(buf[:sw.pos]) // Only write written bytes
+	_, err = w.Write(buf[:sw.Offset()]) // Only write written bytes
 	if err != nil {
 		return err
 	}
@@ -150,6 +193,31 @@ func (a *AudioSampleEntryBox) Encode(w io.Writer) error {
 	return err
 }
 
+// Encode - write box to sw
+func (a *AudioSampleEntryBox) EncodeSW(sw bits.SliceWriter) error {
+	err := EncodeHeaderSW(a, sw)
+	if err != nil {
+		return err
+	}
+	sw.WriteZeroBytes(6)
+	sw.WriteUint16(a.DataReferenceIndex)
+	sw.WriteZeroBytes(8) // pre_defined and reserved
+	sw.WriteUint16(a.ChannelCount)
+	sw.WriteUint16(a.SampleSize)
+	sw.WriteZeroBytes(4)                          // Pre-defined and reserved
+	sw.WriteUint32(makeFixed32Uint(a.SampleRate)) // nrAudioSampleBytesBeforeChildren bytes this far
+
+	// Next output child boxes in order
+	for _, child := range a.Children {
+		err = child.EncodeSW(sw)
+		if err != nil {
+			return err
+		}
+	}
+	return err
+}
+
+// Info - write box info to w
 func (a *AudioSampleEntryBox) Info(w io.Writer, specificBoxLevels, indent, indentStep string) error {
 	bd := newInfoDumper(w, indent, a, -1, 0)
 	if bd.err != nil {
@@ -163,4 +231,24 @@ func (a *AudioSampleEntryBox) Info(w io.Writer, specificBoxLevels, indent, inden
 		}
 	}
 	return nil
+}
+
+// RemoveEncryption - remove sinf box and set type to unencrypted type
+func (a *AudioSampleEntryBox) RemoveEncryption() (*SinfBox, error) {
+	if a.name != "enca" {
+		return nil, fmt.Errorf("is not encrypted: %s", a.name)
+	}
+	sinf := a.Sinf
+	if sinf == nil {
+		return nil, fmt.Errorf("does not have sinf box")
+	}
+	for i := range a.Children {
+		if a.Children[i].Type() == "sinf" {
+			a.Children = append(a.Children[:i], a.Children[i+1:]...)
+			a.Sinf = nil
+			break
+		}
+	}
+	a.name = sinf.Frma.DataFormat
+	return sinf, nil
 }

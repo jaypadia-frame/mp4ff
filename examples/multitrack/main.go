@@ -19,13 +19,14 @@ const (
 	filePath = "testdata/main_1.mp4"
 )
 
+// Track - information for an mp4 track
 type Track struct {
 	trackID   uint32
 	hdlrType  string
 	timeScale uint64
 	trak      *mp4.TrakBox
 	trex      *mp4.TrexBox
-	samples   []*mp4.FullSample
+	samples   []mp4.FullSample
 }
 
 func main() {

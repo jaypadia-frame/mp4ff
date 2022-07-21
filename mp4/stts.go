@@ -1,11 +1,11 @@
 package mp4
 
 import (
-	"encoding/binary"
+	"fmt"
 	"io"
-	"io/ioutil"
-	"log"
 	"time"
+
+	"github.com/edgeware/mp4ff/bits"
 )
 
 // SttsBox -  Decoding Time to Sample Box (stts - mandatory)
@@ -22,26 +22,30 @@ type SttsBox struct {
 }
 
 // DecodeStts - box-specific decode
-func DecodeStts(hdr *boxHeader, startPos uint64, r io.Reader) (Box, error) {
-	data, err := ioutil.ReadAll(r)
+func DecodeStts(hdr BoxHeader, startPos uint64, r io.Reader) (Box, error) {
+	data, err := readBoxBody(r, hdr)
 	if err != nil {
 		return nil, err
 	}
-	versionAndFlags := binary.BigEndian.Uint32(data[0:4])
-	b := &SttsBox{
-		Version:         byte(versionAndFlags >> 24),
-		Flags:           versionAndFlags & flagsMask,
-		SampleCount:     []uint32{},
-		SampleTimeDelta: []uint32{},
+	sr := bits.NewFixedSliceReader(data)
+	return DecodeSttsSR(hdr, startPos, sr)
+}
+
+// DecodeSttsSR - box-specific decode
+func DecodeSttsSR(hdr BoxHeader, startPos uint64, sr bits.SliceReader) (Box, error) {
+	versionAndFlags := sr.ReadUint32()
+	entryCount := sr.ReadUint32()
+	b := SttsBox{
+		Version: byte(versionAndFlags >> 24),
+		Flags:   versionAndFlags & flagsMask,
 	}
-	ec := binary.BigEndian.Uint32(data[4:8])
-	for i := 0; i < int(ec); i++ {
-		sCount := binary.BigEndian.Uint32(data[(8 + 8*i):(12 + 8*i)])
-		sDelta := binary.BigEndian.Uint32(data[(12 + 8*i):(16 + 8*i)])
-		b.SampleCount = append(b.SampleCount, sCount)
-		b.SampleTimeDelta = append(b.SampleTimeDelta, sDelta)
+	b.SampleCount = make([]uint32, entryCount)
+	b.SampleTimeDelta = make([]uint32, entryCount)
+	for i := 0; i < int(entryCount); i++ {
+		b.SampleCount[i] = sr.ReadUint32()
+		b.SampleTimeDelta[i] = sr.ReadUint32()
 	}
-	return b, nil
+	return &b, nil
 }
 
 // Type - return box type
@@ -76,36 +80,66 @@ func (b *SttsBox) GetTimeCode(sample, timescale uint32) time.Duration {
 // GetDecodeTime - decode time and duration for (one-based) sampleNr in track timescale
 func (b *SttsBox) GetDecodeTime(sampleNr uint32) (decTime uint64, dur uint32) {
 	if sampleNr == 0 {
-		// This is bad index input. Should not happen
-		log.Print("ERROR: SttsBox.GetDecodeTime called with sampleNr == 0, although one-based")
-		return 0, 1
+		// This is bad index input. Should never happen
+		panic("SttsBox.GetDecodeTime called with sampleNr == 0, although one-based")
 	}
-	sampleNr-- // one-based
+	samplesRemaining := sampleNr - 1
 	decTime = 0
 	i := 0
-	for sampleNr > 0 && i < len(b.SampleCount) {
+	for {
 		dur = b.SampleTimeDelta[i]
-
-		if sampleNr >= b.SampleCount[i] {
+		if samplesRemaining >= b.SampleCount[i] {
 			decTime += uint64(b.SampleCount[i] * dur)
-			sampleNr -= b.SampleCount[i]
+			samplesRemaining -= b.SampleCount[i]
 		} else {
-			decTime += uint64(sampleNr * dur)
-			sampleNr = 0
+			if samplesRemaining > 0 {
+				decTime += uint64(samplesRemaining * dur)
+			}
+			break
 		}
 		i++
 	}
 	return decTime, dur
 }
 
+// GetDur - get dur for a specific sample
+func (b *SttsBox) GetDur(sampleNr uint32) (dur uint32) {
+	if sampleNr == 0 {
+		// This is bad index input. Should never happen
+		panic("SttsBox.GetDur called with sampleNr == 0, although one-based")
+	}
+	sampleNr-- // one-based -> zero-based
+	i := 0
+	for i < len(b.SampleCount) {
+		dur = b.SampleTimeDelta[i]
+
+		if sampleNr >= b.SampleCount[i] {
+			sampleNr -= b.SampleCount[i]
+		} else {
+			return dur
+		}
+		i++
+	}
+	return dur
+}
+
 // Encode - write box to w
 func (b *SttsBox) Encode(w io.Writer) error {
-	err := EncodeHeader(b, w)
+	sw := bits.NewFixedSliceWriter(int(b.Size()))
+	err := b.EncodeSW(sw)
 	if err != nil {
 		return err
 	}
-	buf := makebuf(b)
-	sw := NewSliceWriter(buf)
+	_, err = w.Write(sw.Bytes())
+	return err
+}
+
+// EncodeSW - box-specific encode to slicewriter
+func (b *SttsBox) EncodeSW(sw bits.SliceWriter) error {
+	err := EncodeHeaderSW(b, sw)
+	if err != nil {
+		return err
+	}
 	versionAndFlags := (uint32(b.Version) << 24) + b.Flags
 	sw.WriteUint32(versionAndFlags)
 	sw.WriteUint32(uint32(len(b.SampleCount)))
@@ -113,9 +147,10 @@ func (b *SttsBox) Encode(w io.Writer) error {
 		sw.WriteUint32(b.SampleCount[i])
 		sw.WriteUint32(b.SampleTimeDelta[i])
 	}
-	_, err = w.Write(buf)
-	return err
+	return sw.AccError()
 }
+
+// Info - write box-specific information
 func (b *SttsBox) Info(w io.Writer, specificBoxLevels, indent, indentStep string) error {
 	bd := newInfoDumper(w, indent, b, int(b.Version), b.Flags)
 	level := getInfoLevel(b, specificBoxLevels)
@@ -126,4 +161,25 @@ func (b *SttsBox) Info(w io.Writer, specificBoxLevels, indent, indentStep string
 		}
 	}
 	return bd.err
+}
+
+// GetSampleNrAtTime - get sample number at or as soon as possible after time
+// Time is calculated by summing up durations of previous samples
+func (b *SttsBox) GetSampleNrAtTime(sampleStartTime uint64) (sampleNr uint32, err error) {
+	accTime := uint64(0)
+	accNr := uint32(0)
+	for i := 0; i < len(b.SampleCount); i++ {
+		timeDelta := uint64(b.SampleTimeDelta[i])
+		if sampleStartTime < accTime+uint64(b.SampleCount[i])*timeDelta {
+			relTime := (sampleStartTime - accTime)
+			nrInInterval := relTime / timeDelta
+			if relTime%timeDelta != 0 { // If not exact, increase number to next sample
+				nrInInterval++
+			}
+			return accNr + uint32(nrInInterval) + 1, nil
+		}
+		accNr += b.SampleCount[i]
+		accTime += timeDelta * uint64(b.SampleCount[i])
+	}
+	return 0, fmt.Errorf("no matching sample found for time=%d", sampleStartTime)
 }

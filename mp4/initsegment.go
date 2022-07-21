@@ -7,6 +7,7 @@ import (
 
 	"github.com/jaypadia-frame/mp4ff/aac"
 	"github.com/jaypadia-frame/mp4ff/avc"
+	"github.com/jaypadia-frame/mp4ff/bits"
 	"github.com/jaypadia-frame/mp4ff/hevc"
 )
 
@@ -36,6 +37,15 @@ func (s *InitSegment) AddChild(b Box) {
 	s.Children = append(s.Children, b)
 }
 
+// Size - size of init segment
+func (s *InitSegment) Size() uint64 {
+	var size uint64 = 0
+	for _, box := range s.Children {
+		size += box.Size()
+	}
+	return size
+}
+
 // Encode - encode an initsegment to a Writer
 func (s *InitSegment) Encode(w io.Writer) error {
 	for _, b := range s.Children {
@@ -47,9 +57,20 @@ func (s *InitSegment) Encode(w io.Writer) error {
 	return nil
 }
 
+// EncodeSW - encode an initsegment to a SliceWriter
+func (s *InitSegment) EncodeSW(sw bits.SliceWriter) error {
+	for _, b := range s.Children {
+		err := b.EncodeSW(sw)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Info - write box tree with indent for each level
-func (i *InitSegment) Info(w io.Writer, specificBoxLevels, indent, indentStep string) error {
-	for _, box := range i.Children {
+func (s *InitSegment) Info(w io.Writer, specificBoxLevels, indent, indentStep string) error {
+	for _, box := range s.Children {
 		err := box.Info(w, specificBoxLevels, indent, indentStep)
 		if err != nil {
 			return err
@@ -72,8 +93,8 @@ func CreateEmptyInit() *InitSegment {
 }
 
 // AddEmptyTrack - add trak + trex box with appropriate trackID value
-func (i *InitSegment) AddEmptyTrack(timeScale uint32, mediaType, language string) {
-	moov := i.Moov
+func (s *InitSegment) AddEmptyTrack(timeScale uint32, mediaType, language string) {
+	moov := s.Moov
 	trackID := uint32(len(moov.Traks) + 1)
 	moov.Mvhd.NextTrackID = trackID + 1
 	newTrak := CreateEmptyTrak(trackID, timeScale, mediaType, language)
@@ -81,7 +102,7 @@ func (i *InitSegment) AddEmptyTrack(timeScale uint32, mediaType, language string
 	moov.Mvex.AddChild(CreateTrex(trackID))
 }
 
-// Create a full Trak tree for an empty (fragmented) track with no samples or stsd content
+// CreateEmptyTrak - create a full trak-tree for an empty (fragmented) track with no samples or stsd content
 func CreateEmptyTrak(trackID, timeScale uint32, mediaType, language string) *TrakBox {
 	/*  Built tree like
 	- trak
@@ -135,8 +156,10 @@ func CreateEmptyTrak(trackID, timeScale uint32, mediaType, language string) *Tra
 		minf.AddChild(CreateVmhd())
 	case "audio":
 		minf.AddChild(CreateSmhd())
-	case "subtitle":
+	case "subtitle", "subtitles":
 		minf.AddChild(&SthdBox{})
+	case "text", "wvtt":
+		minf.AddChild(&NmhdBox{})
 	default:
 		minf.AddChild(&NmhdBox{})
 	}
@@ -155,9 +178,12 @@ func CreateEmptyTrak(trackID, timeScale uint32, mediaType, language string) *Tra
 }
 
 // SetAVCDescriptor - Set AVC SampleDescriptor based on SPS and PPS
-func (t *TrakBox) SetAVCDescriptor(sampleDescriptorType string, spsNALUs, ppsNALUs [][]byte) error {
+func (t *TrakBox) SetAVCDescriptor(sampleDescriptorType string, spsNALUs, ppsNALUs [][]byte, includePS bool) error {
 	if sampleDescriptorType != "avc1" && sampleDescriptorType != "avc3" {
 		return fmt.Errorf("sampleDescriptorType %s not allowed", sampleDescriptorType)
+	}
+	if sampleDescriptorType == "avc1" && !includePS {
+		return fmt.Errorf("cannot make avc1 descriptor without parameter sets")
 	}
 	avcSPS, err := avc.ParseSPSNALUnit(spsNALUs[0], false)
 	if err != nil {
@@ -167,7 +193,7 @@ func (t *TrakBox) SetAVCDescriptor(sampleDescriptorType string, spsNALUs, ppsNAL
 	t.Tkhd.Height = Fixed32(avcSPS.Height << 16) // This is display height
 	stsd := t.Mdia.Minf.Stbl.Stsd
 
-	avcC, err := CreateAvcC(spsNALUs, ppsNALUs)
+	avcC, err := CreateAvcC(spsNALUs, ppsNALUs, includePS)
 	if err != nil {
 		return err
 	}
@@ -177,8 +203,8 @@ func (t *TrakBox) SetAVCDescriptor(sampleDescriptorType string, spsNALUs, ppsNAL
 	return nil
 }
 
-// SetHEVCDescriptor - Set HEVC SampleDescriptor based on VPS, SPS, and PPS
-func (t *TrakBox) SetHEVCDescriptor(sampleDescriptorType string, vpsNALUs, spsNALUs, ppsNALUs [][]byte) error {
+// SetHEVCDescriptor - Set HEVC SampleDescriptor based on descriptorType and VPS, SPS, and PPS
+func (t *TrakBox) SetHEVCDescriptor(sampleDescriptorType string, vpsNALUs, spsNALUs, ppsNALUs [][]byte, includePS bool) error {
 	if sampleDescriptorType != "hvc1" && sampleDescriptorType != "hev1" {
 		return fmt.Errorf("sampleDescriptorType %s not allowed", sampleDescriptorType)
 	}
@@ -191,7 +217,14 @@ func (t *TrakBox) SetHEVCDescriptor(sampleDescriptorType string, vpsNALUs, spsNA
 	t.Tkhd.Height = Fixed32(height << 16) // This is display height
 	stsd := t.Mdia.Minf.Stbl.Stsd
 
-	hvcC, err := CreateHvcC(vpsNALUs, spsNALUs, ppsNALUs, true, true, true)
+	// hvc1 must include parameter sets (PS) and they must be complete
+	// hev1 may include PS and they may not be complete
+	// here we choose to include PS in both cases
+	completePS := sampleDescriptorType == "hvc1"
+	if sampleDescriptorType == "hvc1" && !includePS {
+		return fmt.Errorf("must include parameter sets for hvc1")
+	}
+	hvcC, err := CreateHvcC(vpsNALUs, spsNALUs, ppsNALUs, completePS, completePS, completePS, includePS)
 	if err != nil {
 		return err
 	}
@@ -247,5 +280,55 @@ func (t *TrakBox) SetAACDescriptor(objType byte, samplingFrequency int) error {
 		uint16(asc.ChannelConfiguration),
 		16, uint16(samplingFrequency), esds)
 	stsd.AddChild(mp4a)
+	return nil
+}
+
+// SetAC3Descriptor  - Modify a TrakBox by adding AC-3 SampleDescriptor
+func (t *TrakBox) SetAC3Descriptor(dac3 *Dac3Box) error {
+	stsd := t.Mdia.Minf.Stbl.Stsd
+	nrChannels, _ := dac3.ChannelInfo()
+	samplingFrequency := AC3SampleRates[dac3.FSCod]
+
+	ac3 := CreateAudioSampleEntryBox("ac-3",
+		uint16(nrChannels), //  Not to be used, but we set it anyway
+		16, uint16(samplingFrequency), dac3)
+	stsd.AddChild(ac3)
+	return nil
+}
+
+// SetEC3Descriptor  - Modify a TrakBox by adding EC-3 SampleDescriptor
+func (t *TrakBox) SetEC3Descriptor(dec3 *Dec3Box) error {
+	stsd := t.Mdia.Minf.Stbl.Stsd
+	nrChannels, _ := dec3.ChannelInfo()
+	fscod := dec3.EC3Subs[0].FSCod
+	samplingFrequency := AC3SampleRates[fscod]
+
+	ec3 := CreateAudioSampleEntryBox("ec-3",
+		uint16(nrChannels), //  Not to be used, but we set it anyway
+		16, uint16(samplingFrequency), dec3)
+	stsd.AddChild(ec3)
+	return nil
+}
+
+// SetWvttDescriptor - Set wvtt descriptor with a vttC box. config should start with WEBVTT or be empty.
+func (t *TrakBox) SetWvttDescriptor(config string) error {
+	if config == "" {
+		config = "WEBVTT"
+	}
+	vttC := VttCBox{Config: config}
+	wvtt := WvttBox{}
+	wvtt.AddChild(&vttC)
+	t.Mdia.Minf.Stbl.Stsd.AddChild(&wvtt)
+	return nil
+}
+
+// SetStppDescriptor - add stpp box with utf8-lists namespace, schemaLocation and auxiliaryMimeType
+// The utf8-lists have space-separated items, but no zero-termination
+func (t *TrakBox) SetStppDescriptor(namespace, schemaLocation, auxiliaryMimeTypes string) error {
+	if namespace == "" {
+		namespace = "http://www.w3.org/ns/ttml"
+	}
+	stpp := NewStppBox(namespace, schemaLocation, auxiliaryMimeTypes)
+	t.Mdia.Minf.Stbl.Stsd.AddChild(stpp)
 	return nil
 }

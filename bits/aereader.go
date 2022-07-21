@@ -2,24 +2,26 @@ package bits
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
+	"io/ioutil"
 )
 
 // AccErrReader - bit reader that accumulates error
 // First error can be fetched as reader.AccError()
 type AccErrReader struct {
+	rd     io.Reader
+	err    error
 	nrBits int  // current number of bits
 	value  uint // current accumulated value
-	err    error
-
-	rd io.Reader
 }
 
+// AccError - accumulated error is first error that occurred
 func (r *AccErrReader) AccError() error {
 	return r.err
 }
 
-// NewReader - return a new Reader
+// NewAccErrReader - return a new Reader
 func NewAccErrReader(rd io.Reader) *AccErrReader {
 	return &AccErrReader{
 		rd: rd,
@@ -59,4 +61,32 @@ func (r *AccErrReader) ReadFlag() bool {
 		return false
 	}
 	return bit == 1
+}
+
+// ReadFlag - Read i(v) which is 2-complement of n bits
+func (r *AccErrReader) ReadVInt(n int) int {
+	uval := r.Read(n)
+	var ival int
+
+	if uval >= 1<<(n/2) {
+		ival = int(uval) - (1 << n)
+	}
+	return ival
+}
+
+// ReadRemainingBytes - read remaining bytes if byte-aligned
+func (r *AccErrReader) ReadRemainingBytes() []byte {
+	if r.err != nil {
+		return nil
+	}
+	if r.nrBits != 0 {
+		r.err = fmt.Errorf("%d bit instead of byte alignment when reading remaining bytes", r.nrBits)
+		return nil
+	}
+	rest, err := ioutil.ReadAll(r.rd)
+	if err != nil {
+		r.err = err
+		return nil
+	}
+	return rest
 }

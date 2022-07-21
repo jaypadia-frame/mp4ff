@@ -8,13 +8,12 @@ import (
 
 // AccErrEBSPReader - Reader that drops start code emulation 0x03 after two bytes of 0x00
 type AccErrEBSPReader struct {
-	n   int  // current number of bits
-	v   uint // current accumulated value
-	pos int
-
 	rd        io.Reader
-	zeroCount int // Count number of zero bytes read
 	err       error
+	n         int  // current number of bits
+	v         uint // current accumulated value
+	pos       int
+	zeroCount int // Count number of zero bytes read
 }
 
 // NewAccErrEBSPReader - return a new reader accumulating errors.
@@ -81,6 +80,22 @@ func (r *AccErrEBSPReader) Read(n int) uint {
 	return v
 }
 
+// Read - read n bytes and return nil if (previous) error or if n bytes not available
+func (r *AccErrEBSPReader) ReadBytes(n int) []byte {
+	if r.err != nil {
+		return nil
+	}
+	payload := make([]byte, n)
+	for i := 0; i < n; i++ {
+		b := byte(r.Read(8))
+		payload[i] = b
+	}
+	if r.err != nil {
+		return nil
+	}
+	return payload
+}
+
 // ReadFlag - read 1 bit into bool. Return false if not possible
 func (r *AccErrEBSPReader) ReadFlag() bool {
 	return r.Read(1) == 1
@@ -125,9 +140,8 @@ func (r *AccErrEBSPReader) ReadSignedGolomb() int {
 	}
 	if unsignedGolomb%2 == 1 {
 		return int((unsignedGolomb + 1) / 2)
-	} else {
-		return -int(unsignedGolomb / 2)
 	}
+	return -int(unsignedGolomb / 2)
 }
 
 // IsSeeker - does reader support Seek
@@ -136,14 +150,14 @@ func (r *AccErrEBSPReader) IsSeeker() bool {
 	return ok
 }
 
-// MoreRbspData - false if next bit is 1 and last 1 in fullSlice
+// MoreRbspData - false if next bit is 1 and last 1 in fullSlice.
 // Underlying reader must support ReadSeeker interface to reset after check
 // Return false, nil if underlying error
 func (r *AccErrEBSPReader) MoreRbspData() (bool, error) {
 	if !r.IsSeeker() {
 		return false, ErrNotReedSeeker
 	}
-	// Find out if next positon is the last 1
+	// Find out if next position is the last 1
 	stateCopy := *r
 
 	firstBit := r.Read(1)
@@ -224,5 +238,12 @@ func (r *AccErrEBSPReader) ReadRbspTrailingBits() error {
 		if b == 1 {
 			return fmt.Errorf("Another 1 in RbspTrailingBits")
 		}
+	}
+}
+
+// SetError - set an error if not already set.
+func (r *AccErrEBSPReader) SetError(err error) {
+	if r.err != nil {
+		r.err = err
 	}
 }
